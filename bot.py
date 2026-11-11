@@ -921,7 +921,7 @@ async def autocompletar_campeao(interaction: discord.Interaction, atual: str):
 @bot.tree.command(name="build", description="Build mais usada de um campeão (dados do OP.GG)")
 @app_commands.describe(campeao="Nome do campeão", rota="Rota (vazio = a mais jogada)",
                        modo="Solo/Duo, Flex ou ARAM (padrão: Solo/Duo)",
-                       elo="Filtrar pelo elo dos jogadores (padrão: Esmeralda+)")
+                       elo="Filtrar pelo elo dos jogadores (padrão: Mestre+)")
 @app_commands.autocomplete(campeao=autocompletar_campeao)
 @app_commands.choices(
     rota=[app_commands.Choice(name=nome, value=r) for r, nome in ROTAS_OPGG.items()],
@@ -937,14 +937,15 @@ async def cmd_build(interaction: discord.Interaction, campeao: str,
     await interaction.response.defer()
     id_riot = riot.campeoes[champ]["id"]
     modo_v = modo.value if modo else "ranked"
-    elo_v = elo.value if elo else None
+    # Padrão: Mestre+ nas ranqueadas. No ARAM fica "todos os elos", porque Mestre+ tem poucas partidas lá.
+    elo_v = elo.value if elo else (None if modo_v == "aram" else "master_plus")
     b = await opgg.build(id_riot, rota.value if rota else None, modo_v, elo_v)
 
     nome = riot.nome_campeao(champ)
     onde = "ARAM" if modo_v == "aram" else ROTAS_OPGG.get(b["rota"], b["rota"])
     if modo_v == "flex":
         onde += " (Flex)"
-    nome_elo = ELOS_OPGG[elo_v] if elo_v else ("Todos os elos" if modo_v == "aram" else "Esmeralda+")
+    nome_elo = ELOS_OPGG[elo_v] if elo_v else "Todos os elos"
     embed_titulo = f"🛠️ Build de {nome} — {onde} · {nome_elo}"
     partes = []
     if b["winrate"] is not None:
