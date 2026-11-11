@@ -42,6 +42,7 @@
 | `/historico [Nome#TAG] [quantidade]` | Últimas partidas |
 | `/maestria [Nome#TAG] [quantidade]` | Campeões com mais maestria |
 | `/aovivo [Nome#TAG]` | Raio-X da partida atual |
+| `/ultimate-bravery [mapa]` | Sorteia campeão, 6 itens e 2 feitiços (Summoner's Rift ou ARAM) |
 | `/vincular Nome#TAG` / `/desvincular` | Liga ou desliga a sua conta |
 | `/ranking [fila]` | Ranking Solo/Duo e Flex do servidor |
 | `/semana` | Resumo dos últimos 7 dias |

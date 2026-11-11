@@ -72,6 +72,7 @@ class RiotAPI:
         self.runas: dict[int, dict] = {}          # runa ou árvore -> {"nome", "icone"}
         self.feiticos: dict[int, dict] = {}
         self._imagens: OrderedDict[str, bytes] = OrderedDict()
+        self._bravery: dict | None = None  # itens e feitiços do /ultimate-bravery (baixados no 1º uso)
         self.pasta_cache = config.PASTA / "cache"
 
     # ------------------------------------------------------------ ciclo de vida
@@ -104,6 +105,55 @@ class RiotAPI:
             self.campeao_por_id[c["id"]] = int(c["key"])
 
         log.info("Data Dragon %s: %d campeões", self.versao, len(self.campeoes))
+
+    async def dados_bravery(self, mapa: str = "11") -> dict:
+        """Itens lendários, botas e feitiços de um mapa ("11" = Summoner's Rift, "12" = Howling Abyss),
+        só com id e nome. Baixa na primeira vez que alguém usa o /ultimate-bravery, para não gastar
+        memória à toa."""
+        if not self._bravery or self._bravery["versao"] != self.versao:
+            self._bravery = await self._baixar_bravery()
+        return self._bravery[mapa]
+
+    async def _baixar_bravery(self) -> dict:
+        base = f"/cdn/{self.versao}/data/pt_BR"
+        try:
+            itens, feiticos = await asyncio.gather(self._json_dd(f"{base}/item.json"),
+                                                   self._json_dd(f"{base}/summoner.json"))
+        except Exception as e:
+            log.warning("Não consegui baixar itens/feitiços do Data Dragon: %s", e)
+            raise RiotErro("Não consegui carregar os itens do jogo agora. Tente de novo daqui a pouco.")
+
+        resultado: dict = {"versao": self.versao}
+        for mapa, modo in (("11", "CLASSIC"), ("12", "ARAM")):
+            lendarios: dict[str, int] = {}
+            botas: dict[str, int] = {}
+            for iid, it in itens["data"].items():
+                # IDs com 5+ dígitos são cópias de outros modos (Arena, eventos, itens antigos)
+                if int(iid) >= 10000:
+                    continue
+                ouro = it.get("gold", {})
+                tags = it.get("tags", [])
+                if (not it.get("maps", {}).get(mapa) or not ouro.get("purchasable") or it.get("inStore") is False
+                        or it.get("requiredChampion") or it.get("requiredAlly") or it.get("hideFromAll")
+                        or "Consumable" in tags or "Trinket" in tags):
+                    continue
+                if "Boots" in tags:
+                    if "1001" in it.get("from", []):  # botas de nível 2 (feitas a partir das Botas)
+                        botas.setdefault(it["name"], int(iid))
+                elif not it.get("into") and ouro.get("total", 0) >= 2200:  # item lendário (final)
+                    lendarios.setdefault(it["name"], int(iid))
+
+            magias = {f["name"]: f["id"] for f in feiticos["data"].values() if modo in f.get("modes", [])}
+            if len(lendarios) < 6 or not botas or len(magias) < 2:
+                raise RiotErro("Os dados de itens do jogo vieram incompletos. Tente de novo mais tarde.")
+            resultado[mapa] = {
+                "lendarios": [(i, n) for n, i in lendarios.items()],
+                "botas": [(i, n) for n, i in botas.items()],
+                "feiticos": [(i, n) for n, i in magias.items()],
+            }
+            log.info("Ultimate Bravery (mapa %s): %d itens lendários, %d botas, %d feitiços",
+                     mapa, len(lendarios), len(botas), len(magias))
+        return resultado
 
     # ------------------------------------------------------------ nomes e imagens
     def nome_campeao(self, key: int) -> str:

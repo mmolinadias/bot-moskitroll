@@ -14,7 +14,7 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 ## Arquivos
 - `bot.py` — comandos slash, botões (DynamicItem persistentes), loops (`tasks.loop`).
 - `riot.py` — `RiotAPI`: requisições com `Limitador` (20/s e 100/2min), Data Dragon pt_BR
-  (só nomes de campeões), cache de imagens em `cache/` (até 100 na memória).
+  (nomes de campeões; itens e feitiços só quando usam o /ultimate-bravery), cache de imagens em `cache/` (até 100 na memória).
 - `analise.py` — textos de elo, `pontuacao_elo` (100 pts = 1 divisão), nota 0–10 por percentil
   (KDA, participação, dano, ouro, visão), MVP/ACE, odds das apostas.
 - `imagens.py` — Pillow: cartão de `/perfil`.
@@ -23,7 +23,7 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 - `config.py` — lê o `.env`.
 
 ## Comandos
-`/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores),
+`/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores), `/ultimate-bravery [mapa]` (sorteio; itens/feitiços baixados no 1º uso, IDs < 10000),
 `/vincular`, `/desvincular`, `/ranking [fila]` (Solo/Duo e Flex),
 `/semana`, `/carteira`, `/diario`, `/top-moedas`, `/config-alertas`, `/desativar-alertas`, `/ajuda`.
 

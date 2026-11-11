@@ -4,6 +4,7 @@ Rode com:  python bot.py
 """
 import asyncio
 import logging
+import random
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -910,6 +911,37 @@ async def _antes_semanal():
     await bot.wait_until_ready()
 
 
+# ================================================================ /ultimate-bravery
+MAPAS_BRAVERY = {"11": "Summoner's Rift", "12": "Howling Abyss (ARAM)"}
+
+
+@bot.tree.command(name="ultimate-bravery", description="Sorteia um campeão, 6 itens e 2 feitiços aleatórios")
+@app_commands.describe(mapa="Mapa da partida (padrão: Summoner's Rift)")
+@app_commands.choices(mapa=[app_commands.Choice(name=nome, value=m) for m, nome in MAPAS_BRAVERY.items()])
+async def cmd_ultimate_bravery(interaction: discord.Interaction, mapa: app_commands.Choice[str] | None = None):
+    await interaction.response.defer()
+    if not riot.campeoes:
+        raise RiotErro("Ainda não carreguei a lista de campeões. Tente de novo daqui a pouco.")
+    mapa_id = mapa.value if mapa else "11"
+    d = await riot.dados_bravery(mapa_id)
+
+    champ = random.choice(list(riot.campeoes))
+    sem_botas = riot.campeoes[champ]["id"] == "Cassiopeia"  # ela não pode comprar botas
+    build = ([] if sem_botas else [random.choice(d["botas"])]) + random.sample(d["lendarios"], 6 if sem_botas else 5)
+    feiticos = random.sample(d["feiticos"], 2)
+
+    linhas = [f"`{i}.` {'👢 ' if i == 1 and not sem_botas else ''}**{nome}**"
+              for i, (_, nome) in enumerate(build, start=1)]
+    embed = discord.Embed(title=f"🎲 Ultimate Bravery — {MAPAS_BRAVERY[mapa_id]}", color=CORES["ouro"],
+                          description=f"{interaction.user.mention}, você vai jogar de **{riot.nome_campeao(champ)}**!")
+    embed.add_field(name="✨ Feitiços", value=" + ".join(f"**{nome}**" for _, nome in feiticos), inline=False)
+    embed.add_field(name="🛒 Build", value="\n".join(linhas), inline=False)
+    if riot.url_campeao(champ):
+        embed.set_thumbnail(url=riot.url_campeao(champ))
+    embed.set_footer(text="Sem trocar nada. Boa sorte! 😅")
+    await interaction.followup.send(embed=embed, allowed_mentions=SEM_MENCAO)
+
+
 # ================================================================ /ajuda
 @bot.tree.command(name="ajuda", description="Lista os comandos do bot")
 async def cmd_ajuda(interaction: discord.Interaction):
@@ -919,7 +951,8 @@ async def cmd_ajuda(interaction: discord.Interaction):
         "`/elo` — elo, PDL e winrate\n"
         "`/historico` — últimas partidas\n"
         "`/maestria` — campeões com mais maestria\n"
-        "`/aovivo` — raio-X da partida atual (elo dos 10 jogadores)"))
+        "`/aovivo` — raio-X da partida atual (elo dos 10 jogadores)\n"
+        "`/ultimate-bravery` — sorteia campeão, itens e feitiços"))
     embed.add_field(name="👥 Servidor", inline=False, value=(
         "`/vincular Nome#TAG` — liga sua conta\n"
         "`/ranking` — ranking de elo (Solo/Duo e Flex)\n"
