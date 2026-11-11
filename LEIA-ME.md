@@ -22,6 +22,18 @@
    ```
 4. Ligue o bot de novo: `python bot.py`
 
+## Como atualizar o bot na Discloud
+1. Na pasta do bot, rode:
+   ```
+   python montar_zip.py
+   ```
+2. Na Discloud, abra o bot, vá em **Commit** e arraste o `bot-discloud.zip`.
+3. Confira em **Logs** se apareceu "Bot online".
+
+O zip **não leva o `dados.json` de propósito**. A Discloud só troca os arquivos que estão no zip, então as moedas, apostas, vínculos e o histórico que o bot juntou lá continuam intactos. **Nunca envie o `dados.json` do seu PC**: ele está desatualizado e apagaria esses dados.
+
+Para guardar uma cópia dos dados, use o botão **Backup** na página do bot na Discloud.
+
 ## Instalação do zero
 1. Crie o bot em https://discord.com/developers/applications: **New Application → Bot → Reset Token** e copie o token.
 2. Em **OAuth2 → URL Generator**, marque `bot` e `applications.commands`. Nas permissões, marque **View Channels**, **Send Messages**, **Embed Links** e **Attach Files**. Abra a URL e adicione o bot ao seu servidor.

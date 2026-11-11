@@ -41,7 +41,9 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
   podem aparecer com respostas de verdade da API — peça o log do terminal ao usuário.
 - O `/build` e a coleta de builds foram removidos (2026-11-10) para caber nos 100 MB da Discloud.
   O bot também usa `max_messages=None` e não baixa itens/runas/feitiços do Data Dragon.
-- Hospedagem: Discloud (plano grátis, 100 MB). `discloud.config` na raiz; o .zip vai com o `.env`.
+- Hospedagem: Discloud (plano grátis, 100 MB, app id 1794358509464). Atualizar com `python montar_zip.py`
+  e arrastar o `bot-discloud.zip` na página Commit. O zip leva `.env` mas **nunca** o `dados.json`: o commit
+  da Discloud só troca os arquivos enviados, e o `dados.json` de lá é a fonte da verdade (o do PC está velho).
+- Ao trocar a chave da Riot, o bot reconverte os PUUIDs sozinho no início (`atualizar_puuids`).
 - Apostas usam moedas fictícias sem valor real (importante para as políticas da Riot).
-- Próximos passos que o usuário mencionou: hospedar 24h de graça (sugestão: Oracle Cloud Always
-  Free) e talvez publicar o código no GitHub para usar como "Product URL" no pedido da Personal Key.
+- Código público no GitHub (mmolinadias/bot-moskitroll), usado como "Product URL" da Personal Key.
