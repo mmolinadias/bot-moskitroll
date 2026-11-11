@@ -43,3 +43,8 @@ RESUMO_HORA = _int("RESUMO_SEMANAL_HORA", 20)
 SALDO_INICIAL = _int("MOEDAS_INICIAIS", 1000)
 BONUS_DIARIO = _int("MOEDAS_DIARIO", 250)
 TEMPO_APOSTAS_MIN = _int("TEMPO_APOSTAS_MIN", 8)
+
+# Coleta de builds Mestre+ para o /build (precisa de um servidor com mais de 100 MB de RAM)
+COLETA_BUILDS = _bool("COLETA_BUILDS", True)
+COLETA_REGIOES = [r.strip().lower() for r in os.getenv("COLETA_REGIOES", "kr,euw,br").split(",") if r.strip()]
+COLETA_PARTIDAS_HORA = max(1, _int("COLETA_PARTIDAS_HORA", 120))  # por região

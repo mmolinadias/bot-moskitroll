@@ -253,9 +253,11 @@ class RiotAPI:
         return dados
 
     # ------------------------------------------------------------ requisições
-    async def _get(self, url: str, params: dict | None = None):
+    async def _get(self, url: str, params: dict | None = None, limitador: Limitador | None = None):
+        """GET na API da Riot. O limite da chave vale separado para cada região, então a coleta de
+        builds de outras regiões (KR, EUW) usa um limitador próprio."""
         for tentativa in range(4):
-            await self.limitador.esperar()
+            await (limitador or self.limitador).esperar()
             async with self.session.get(url, params=params,
                                         headers={"X-Riot-Token": self.chave}) as r:
                 if r.status == 200:

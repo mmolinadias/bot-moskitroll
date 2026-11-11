@@ -20,7 +20,7 @@ from analise import (FILA_PARA_TIPO, FILAS_RANK, TIMES_PT, calcular_notas, calcu
                      texto_pontuacao, texto_variacao, tier_curto, winrate)
 from dados import Dados
 from imagens import gerar_cartao_perfil
-from opgg import ELOS_OPGG, MODOS_OPGG, OPGG, ROTAS_OPGG
+from coleta import NOMES_FILAS, ROTAS, Coleta
 from riot import NaoEncontrado, RiotAPI, RiotErro
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -28,7 +28,7 @@ log = logging.getLogger("bot-lol")
 
 riot = RiotAPI()
 store = Dados(config.PASTA / "dados.json")
-opgg = OPGG(riot)
+coleta = Coleta(riot, config.PASTA / "builds.json")
 
 CORES = {"ok": 0x2ECC71, "info": 0x3498DB, "aviso": 0xE67E22, "erro": 0xE74C3C, "ouro": 0xF1C40F}
 SEM_MENCAO = discord.AllowedMentions.none()
@@ -60,9 +60,12 @@ class BotLoL(discord.Client):
             log.info("Comandos sincronizados globalmente (podem levar até 1h para aparecer)")
         loop_partidas.start()
         loop_semanal.start()
+        if config.COLETA_BUILDS:
+            coleta.iniciar()
 
     async def close(self):
         store.salvar()
+        coleta.parar()
         await riot.fechar()
         await super().close()
 
@@ -913,51 +916,40 @@ async def _antes_semanal():
     await bot.wait_until_ready()
 
 
-# ================================================================ /build (dados do OP.GG)
+# ================================================================ /build (coleta própria Mestre+)
 async def autocompletar_campeao(interaction: discord.Interaction, atual: str):
     return [app_commands.Choice(name=nome, value=str(key)) for key, nome in riot.sugerir_campeoes(atual)]
 
 
-@bot.tree.command(name="build", description="Build mais usada de um campeão (dados do OP.GG)")
+@bot.tree.command(name="build", description="Build mais usada de um campeão no Mestre+ (KR, EUW e BR)")
 @app_commands.describe(campeao="Nome do campeão", rota="Rota (vazio = a mais jogada)",
-                       modo="Solo/Duo, Flex ou ARAM (padrão: Solo/Duo)",
-                       elo="Filtrar pelo elo dos jogadores (padrão: Mestre+)")
+                       modo="Solo/Duo ou Flex (padrão: Solo/Duo)")
 @app_commands.autocomplete(campeao=autocompletar_campeao)
 @app_commands.choices(
-    rota=[app_commands.Choice(name=nome, value=r) for r, nome in ROTAS_OPGG.items()],
-    modo=[app_commands.Choice(name=nome, value=m) for m, nome in MODOS_OPGG.items()],
-    elo=[app_commands.Choice(name=nome, value=e) for e, nome in ELOS_OPGG.items()])
+    rota=[app_commands.Choice(name=nome, value=r) for r, nome in ROTAS.items()],
+    modo=[app_commands.Choice(name=nome, value=f) for f, nome in NOMES_FILAS.items()])
 async def cmd_build(interaction: discord.Interaction, campeao: str,
                     rota: app_commands.Choice[str] | None = None,
-                    modo: app_commands.Choice[str] | None = None,
-                    elo: app_commands.Choice[str] | None = None):
+                    modo: app_commands.Choice[int] | None = None):
     champ = riot.buscar_campeao(campeao)
     if champ is None:
         raise RiotErro(f"Não conheço o campeão **{campeao}**.")
-    await interaction.response.defer()
-    id_riot = riot.campeoes[champ]["id"]
-    modo_v = modo.value if modo else "ranked"
-    # Padrão: Mestre+ nas ranqueadas. No ARAM fica "todos os elos", porque Mestre+ tem poucas partidas lá.
-    elo_v = elo.value if elo else (None if modo_v == "aram" else "master_plus")
-    b = await opgg.build(id_riot, rota.value if rota else None, modo_v, elo_v)
+    if not config.COLETA_BUILDS:
+        raise RiotErro("A coleta de builds está desligada neste bot (COLETA_BUILDS no .env).")
+    fila = modo.value if modo else 420
+    b = coleta.build(champ, rota.value if rota else None, fila)
 
     nome = riot.nome_campeao(champ)
-    onde = "ARAM" if modo_v == "aram" else ROTAS_OPGG.get(b["rota"], b["rota"])
-    if modo_v == "flex":
-        onde += " (Flex)"
-    nome_elo = ELOS_OPGG[elo_v] if elo_v else "Todos os elos"
-    embed_titulo = f"🛠️ Build de {nome} — {onde} · {nome_elo}"
+    onde = ROTAS.get(b["rota"], b["rota"])
+    titulo = f"🛠️ Build de {nome} — {onde} · {NOMES_FILAS[fila]} Mestre+"
     partes = []
     if b["winrate"] is not None:
         partes.append(f"**{round(b['winrate'] * 100, 1):g}%** de vitórias")
-    if b["partidas"]:
-        partes.append(f"{numero(b['partidas'])} partidas")
-    if b["tier"]:
-        partes.append(f"Tier {b['tier']}")
+    partes.append(f"{numero(b['partidas'])} partidas")
     descricao = " · ".join(partes)
-    if b["partidas"] and b["partidas"] < 1000:
-        descricao += "\n⚠️ Poucas partidas nesse filtro: a build pode variar bastante."
-    embed = discord.Embed(title=embed_titulo, description=descricao or None, color=CORES["ouro"])
+    if b["partidas"] < 200:
+        descricao += "\n⚠️ Poucas partidas ainda: a build pode variar bastante."
+    embed = discord.Embed(title=titulo, description=descricao, color=CORES["ouro"])
 
     r = b["runas"]
     if r:
@@ -966,29 +958,29 @@ async def cmd_build(interaction: discord.Interaction, campeao: str,
     if b["feiticos"]:
         nomes = await riot.nomes_feiticos()
         embed.add_field(name="✨ Feitiços", value=" + ".join(nomes.get(f, f"Feitiço {f}") for f in b["feiticos"]))
-    if b["habilidades"]:
-        embed.add_field(name="📈 Habilidades", value=" → ".join(b["habilidades"]))
+    if b["ordem"]:
+        valor = "Maximizar " + " → ".join(b["ordem"])
+        if b["inicio"]:
+            valor += f"\nComeço: {', '.join(b['inicio'])}"
+        embed.add_field(name="📈 Habilidades", value=valor)
     if b["iniciais"]:
         contagem = Counter(b["iniciais"])
         embed.add_field(name="🎒 Itens iniciais", inline=False,
                         value=" + ".join(f"{n} x{q}" if q > 1 else n for n, q in contagem.items()))
     principais = ([f"👢 {b['botas']}"] if b["botas"] else []) + b["itens"]
     if principais:
-        embed.add_field(name="🛒 Itens principais", inline=False, value=" → ".join(principais))
+        valor = " → ".join(principais)
+        if b["itens_wr"] is not None and b["itens"]:
+            valor += f"\n({round(b['itens_wr'] * 100, 1):g}% de vitórias com esses 3 itens)"
+        embed.add_field(name="🛒 Itens principais", inline=False, value=valor)
     if b["opcoes"]:
         embed.add_field(name="🔁 Opções depois", inline=False, value=", ".join(b["opcoes"]))
     if riot.url_campeao(champ):
         embed.set_thumbnail(url=riot.url_campeao(champ))
-    embed.set_footer(text="Dados: OP.GG · build mais usada no patch atual")
-
-    slug = riot.slug_campeao(champ)
-    link = (f"https://op.gg/pt/lol/modes/aram/{slug}/build" if modo_v == "aram"
-            else f"https://op.gg/pt/lol/champions/{slug}/build/{b['rota']}")
-    if elo_v:
-        link += f"?tier={elo_v}"
-    view = discord.ui.View()
-    view.add_item(discord.ui.Button(label="Ver no OP.GG", url=link))
-    await interaction.followup.send(embed=embed, view=view)
+    regioes = " · ".join(f"{sigla} {numero(n)}" for sigla, n in
+                         sorted(b["regioes"].items(), key=lambda kv: kv[1], reverse=True))
+    embed.set_footer(text=f"Patch {b['patch']} · partidas Mestre+ coletadas: {regioes}")
+    await interaction.response.send_message(embed=embed)
 
 
 # ================================================================ /ultimate-bravery
@@ -1032,7 +1024,7 @@ async def cmd_ajuda(interaction: discord.Interaction):
         "`/historico` — últimas partidas\n"
         "`/maestria` — campeões com mais maestria\n"
         "`/aovivo` — raio-X da partida atual (elo dos 10 jogadores)\n"
-        "`/build campeão` — build mais usada (dados do OP.GG)\n"
+        "`/build campeão` — build mais usada no Mestre+ (KR, EUW e BR)\n"
         "`/ultimate-bravery` — sorteia campeão, itens e feitiços"))
     embed.add_field(name="👥 Servidor", inline=False, value=(
         "`/vincular Nome#TAG` — liga sua conta\n"

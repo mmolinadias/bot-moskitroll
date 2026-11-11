@@ -18,14 +18,17 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 - `analise.py` — textos de elo, `pontuacao_elo` (100 pts = 1 divisão), nota 0–10 por percentil
   (KDA, participação, dano, ouro, visão), MVP/ACE, odds das apostas.
 - `imagens.py` — Pillow: cartão de `/perfil`.
-- `opgg.py` — `/build`: busca a build no serviço público (MCP) do OP.GG (`mcp-api.op.gg/mcp`, sem chave),
-  lê o formato próprio deles (`class X: campos` + `X(...)`), cache de 6h. Não é API oficial: pode quebrar.
+- `coleta.py` — `/build`: coleta própria de partidas Solo/Duo (420) e Flex (440) de jogadores Mestre+ de
+  KR, EUW e BR (League-V4 + Match-V5 + timeline). Guarda só contadores em `builds.json` (2 patches mais novos,
+  combinações raras cortadas, até 300 mil ids de partidas vistas). KR/EUW têm `Limitador` próprio (o limite da
+  Riot é por região); BR usa o limitador principal e só até 50% dos 100/2min, para sobrar para os alertas.
+  Ritmo: `COLETA_PARTIDAS_HORA` por região (padrão 120; ~85 KB por partida). O OP.GG foi removido (2026-11-11).
 - `dados.py` — persistência em `dados.json` (vínculos, canal de alertas, partidas em andamento,
   pendentes, histórico, moedas, controle do resumo semanal). Tudo indexado por id do servidor.
 - `config.py` — lê o `.env`.
 
 ## Comandos
-`/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores), `/build campeão [rota] [modo] [elo]` (OP.GG; elo = parâmetro `tier`, padrão do bot = master_plus nas ranqueadas e sem filtro no ARAM; URF/Nexus Blitz dão erro fora de época), `/ultimate-bravery [mapa]` (sorteio; itens/feitiços baixados no 1º uso, IDs < 10000),
+`/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores), `/build campeão [rota] [modo]` (coleta própria Mestre+, modo Solo/Duo ou Flex; mínimo 20 partidas, usa o patch anterior se o atual tiver pouco), `/ultimate-bravery [mapa]` (sorteio; itens/feitiços baixados no 1º uso, IDs < 10000),
 `/vincular`, `/desvincular`, `/ranking [fila]` (Solo/Duo e Flex),
 `/semana`, `/carteira`, `/diario`, `/top-moedas`, `/config-alertas`, `/desativar-alertas`, `/ajuda`.
 
@@ -41,8 +44,8 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 ## Estado e limitações conhecidas
 - Testado só com dados simulados (o ambiente onde foi escrito não acessava a Riot). Bugs reais
   podem aparecer com respostas de verdade da API — peça o log do terminal ao usuário.
-- A coleta de builds do alto elo foi removida (2026-11-10) para caber nos 100 MB da Discloud; o `/build`
-  voltou usando o OP.GG. O bot também usa `max_messages=None`.
+- A coleta de builds voltou (2026-11-11) para rodar no servidor de um amigo (até 2 GB). Na Discloud grátis (100 MB), use
+  `COLETA_BUILDS=nao`. O bot também usa `max_messages=None`.
 - Hospedagem: Discloud (plano grátis, 100 MB, app id 1794358509464). Atualizar com `python montar_zip.py`
   e arrastar o `bot-discloud.zip` na página Commit. O zip leva `.env` mas **nunca** o `dados.json`: o commit
   da Discloud só troca os arquivos enviados, e o `dados.json` de lá é a fonte da verdade (o do PC está velho).

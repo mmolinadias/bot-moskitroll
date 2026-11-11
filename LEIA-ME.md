@@ -54,7 +54,7 @@ Para guardar uma cópia dos dados, use o botão **Backup** na página do bot na 
 | `/historico [Nome#TAG] [quantidade]` | Últimas partidas |
 | `/maestria [Nome#TAG] [quantidade]` | Campeões com mais maestria |
 | `/aovivo [Nome#TAG]` | Raio-X da partida atual |
-| `/build campeão [rota] [modo] [elo]` | Build mais usada do campeão (dados do OP.GG): Solo/Duo, Flex ou ARAM, com filtro de elo (padrão Mestre+; no ARAM, todos os elos) |
+| `/build campeão [rota] [modo]` | Build mais usada do campeão por jogadores Mestre+ de KR, EUW e BR (Solo/Duo ou Flex) |
 | `/ultimate-bravery [mapa]` | Sorteia campeão, 6 itens e 2 feitiços (Summoner's Rift ou ARAM) |
 | `/vincular Nome#TAG` / `/desvincular` | Liga ou desliga a sua conta |
 | `/ranking [fila]` | Ranking Solo/Duo e Flex do servidor |
@@ -64,6 +64,7 @@ Para guardar uma cópia dos dados, use o botão **Backup** na página do bot na 
 | `/ajuda` | Lista os comandos |
 
 ## Como funcionam algumas coisas
+- **Builds (`/build`):** o bot junta sozinho partidas de jogadores Mestre+ do KR, EUW e BR e soma runas, feitiços, itens e ordem das habilidades. Logo que liga pela primeira vez, leva algumas horas até ter partidas suficientes. Gasta cerca de 0,7 GB de internet por dia (dá para diminuir com `COLETA_PARTIDAS_HORA` no `.env`) e respeita o limite da chave da Riot. Na Discloud grátis, desligue com `COLETA_BUILDS=nao`.
 - **Nota de 0 a 10:** compara cada jogador com os outros 9 em KDA, participação em abates, dano, ouro e visão. O vencedor ganha um pequeno bônus.
 - **Apostas:** ficam abertas por 8 minutos depois do aviso. Quem está jogando só pode apostar no próprio time. Se for remake, o dinheiro volta. As moedas não valem nada de verdade.
 - **Moedas extras:** quem joga ganha +50 moedas por vitória e +100 se for MVP ou ACE. O MVP da semana ganha +500.
