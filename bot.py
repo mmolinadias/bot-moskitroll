@@ -45,6 +45,7 @@ class BotLoL(discord.Client):
 
     async def setup_hook(self):
         await riot.iniciar()
+        await atualizar_puuids()
         self.add_dynamic_items(BotaoAposta)
         if config.GUILD_ID:
             guild = discord.Object(id=int(config.GUILD_ID))
@@ -61,6 +62,48 @@ class BotLoL(discord.Client):
         store.salvar()
         await riot.fechar()
         await super().close()
+
+
+def _trocar_ids(obj, mapa: dict[str, str]):
+    """Troca PUUIDs antigos pelos novos em qualquer lugar dos dados salvos."""
+    if isinstance(obj, dict):
+        return {mapa.get(k, k): _trocar_ids(v, mapa) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_trocar_ids(v, mapa) for v in obj]
+    if isinstance(obj, str):
+        return mapa.get(obj, obj)
+    return obj
+
+
+async def atualizar_puuids():
+    """A Riot criptografa o PUUID de um jeito diferente para cada chave. Se a chave mudou
+    (ex.: de desenvolvimento para Personal Key), busca de novo cada conta pelo Riot ID."""
+    mapa: dict[str, str] = {}
+    for g, vinculos in store.d["vinculos"].items():
+        for u, v in vinculos.items():
+            antigo = v["puuid"]
+            if antigo in mapa:
+                continue
+            try:
+                conta = await riot.conta_por_puuid(antigo)
+            except RiotErro:
+                conta = None
+            if conta is None:  # PUUID de outra chave: procura pelo nome
+                try:
+                    conta = await riot.conta(v["riot_id"])
+                except RiotErro as e:
+                    log.warning("Não consegui atualizar %s: %s", v["riot_id"], e)
+                    continue
+            if conta["puuid"] != antigo:
+                mapa[antigo] = conta["puuid"]
+            novo_nome = f"{conta.get('gameName')}#{conta.get('tagLine')}"
+            if conta.get("gameName") and novo_nome != v["riot_id"]:
+                log.info("Riot ID atualizado: %s -> %s", v["riot_id"], novo_nome)
+                v["riot_id"] = novo_nome
+    if mapa:
+        store.d = _trocar_ids(store.d, mapa)
+        log.info("PUUIDs atualizados para a chave atual: %d conta(s)", len(mapa))
+    store.salvar()
 
 
 bot = BotLoL()
@@ -683,7 +726,14 @@ async def processar_pendentes(g: str, canal):
                 pendentes.pop(game_id)
             continue
         except RiotErro as e:
-            log.warning("Erro ao buscar partida %s: %s", game_id, e)
+            # Ex.: a Riot responde 403 para alguns modos especiais. Desiste depois de ~20 min.
+            p["erros"] = p.get("erros", 0) + 1
+            log.warning("Erro ao buscar partida %s (%d/10): %s", game_id, p["erros"], e)
+            if p["erros"] >= 10:
+                for linha in liquidar_apostas(g, p, None, True):
+                    log.info("Reembolso: %s", linha)
+                pendentes.pop(game_id)
+                log.info("Partida %s descartada: a Riot não liberou o resultado.", game_id)
             continue
 
         depois: dict[str, list] = {}
