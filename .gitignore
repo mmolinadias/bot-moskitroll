@@ -1,0 +1,8 @@
+.env
+dados.json
+dados.json.bak
+builds.json
+cache/
+__pycache__/
+*.tmp
+*.zip

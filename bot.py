@@ -1,0 +1,1006 @@
+"""
+Bot de Discord conectado ao League of Legends.
+Rode com:  python bot.py
+"""
+import asyncio
+import logging
+import time
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
+
+import discord
+from discord import app_commands
+from discord.ext import tasks
+from discord.utils import escape_markdown
+
+import config
+from analise import (FILA_PARA_TIPO, FILAS_RANK, ROTAS_PT, TIMES_PT, calcular_notas, calcular_odds,
+                     compacto, kda, melhor_fila, nome_fila, numero, pontuacao_elo, texto_elo,
+                     texto_pontuacao, texto_variacao, tier_curto, winrate)
+from builds import Builds
+from dados import Dados
+from imagens import gerar_cartao_build, gerar_cartao_perfil
+from riot import NaoEncontrado, RiotAPI, RiotErro
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("bot-lol")
+
+riot = RiotAPI()
+store = Dados(config.PASTA / "dados.json")
+builds = Builds(riot, config.PASTA / "builds.json")
+
+CORES = {"ok": 0x2ECC71, "info": 0x3498DB, "aviso": 0xE67E22, "erro": 0xE74C3C, "ouro": 0xF1C40F}
+SEM_MENCAO = discord.AllowedMentions.none()
+
+try:
+    from zoneinfo import ZoneInfo
+    FUSO = ZoneInfo(config.FUSO)
+except Exception:
+    FUSO = timezone(timedelta(hours=-3))
+
+
+# ================================================================ bot
+class BotLoL(discord.Client):
+    def __init__(self):
+        super().__init__(intents=discord.Intents.default())
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self):
+        await riot.iniciar()
+        self.add_dynamic_items(BotaoBuild, BotaoAposta)
+        if config.GUILD_ID:
+            guild = discord.Object(id=int(config.GUILD_ID))
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            log.info("Comandos sincronizados no servidor %s", config.GUILD_ID)
+        else:
+            await self.tree.sync()
+            log.info("Comandos sincronizados globalmente (podem levar até 1h para aparecer)")
+        loop_partidas.start()
+        loop_semanal.start()
+        if config.COLETAR_BUILDS:
+            loop_builds.start()
+
+    async def close(self):
+        builds.salvar()
+        store.salvar()
+        await riot.fechar()
+        await super().close()
+
+
+bot = BotLoL()
+
+
+@bot.event
+async def on_ready():
+    log.info("Bot online como %s (servidores: %d)", bot.user, len(bot.guilds))
+    await bot.change_presence(activity=discord.Game("League of Legends | /ajuda"))
+
+
+@bot.tree.error
+async def ao_dar_erro(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    original = getattr(error, "original", error)
+    if isinstance(original, RiotErro):
+        msg = str(original)
+    elif isinstance(error, app_commands.MissingPermissions):
+        msg = "Você precisa da permissão **Gerenciar Servidor** para isso."
+    else:
+        log.exception("Erro no comando", exc_info=original)
+        msg = "Algo deu errado. Tente de novo em instantes."
+    await responder(interaction, embed=discord.Embed(description=f"❌ {msg}", color=CORES["erro"]),
+                    ephemeral=True)
+
+
+async def responder(interaction: discord.Interaction, **kwargs):
+    if interaction.response.is_done():
+        await interaction.followup.send(**kwargs)
+    else:
+        await interaction.response.send_message(**kwargs)
+
+
+async def resolver_jogador(jogador: str | None, interaction: discord.Interaction) -> dict:
+    """Aceita um Riot ID; se vazio, usa a conta vinculada de quem chamou o comando."""
+    if jogador:
+        return await riot.conta(jogador)
+    if interaction.guild:
+        v = store.de("vinculos", interaction.guild.id).get(str(interaction.user.id))
+        if v:
+            nome, tag = v["riot_id"].rsplit("#", 1)
+            return {"puuid": v["puuid"], "gameName": nome, "tagLine": tag}
+    raise RiotErro("Informe um jogador (ex.: `Faker#KR1`) ou use `/vincular` antes.")
+
+
+def plural(n: int, palavra: str) -> str:
+    return f"{n} {palavra}{'' if n == 1 else 's'}"
+
+
+def nome_conta(conta: dict) -> str:
+    return f"{conta['gameName']}#{conta['tagLine']}"
+
+
+# ================================================================ /elo /historico /maestria
+@bot.tree.command(name="elo", description="Mostra elo, PDL e winrate de um jogador")
+@app_commands.describe(jogador="Riot ID com TAG, ex.: Faker#KR1 (vazio = sua conta vinculada)")
+async def cmd_elo(interaction: discord.Interaction, jogador: str | None = None):
+    await interaction.response.defer()
+    conta = await resolver_jogador(jogador, interaction)
+    perfil, filas = await asyncio.gather(riot.invocador(conta["puuid"]), riot.elo(conta["puuid"]))
+    embed = discord.Embed(title=nome_conta(conta), description=f"Nível {perfil['summonerLevel']}",
+                          color=CORES["info"])
+    embed.set_thumbnail(url=riot.url_icone_perfil(perfil["profileIconId"]))
+    filas_rank = [f for f in filas if f["queueType"] in FILAS_RANK]
+    if not filas_rank:
+        embed.add_field(name="Ranqueadas", value="Sem ranqueadas nesta temporada.", inline=False)
+    for f in sorted(filas_rank, key=lambda f: f["queueType"] != "RANKED_SOLO_5x5"):
+        extra = "\n🔥 Em sequência de vitórias" if f.get("hotStreak") else ""
+        embed.add_field(name=FILAS_RANK[f["queueType"]],
+                        value=f"**{texto_elo(f)}**\n{f['wins']}V {f['losses']}D ({winrate(f)}% winrate){extra}")
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="historico", description="Mostra as últimas partidas de um jogador")
+@app_commands.describe(jogador="Riot ID com TAG (vazio = sua conta vinculada)",
+                       quantidade="Quantas partidas (1 a 10)")
+async def cmd_historico(interaction: discord.Interaction, jogador: str | None = None,
+                        quantidade: app_commands.Range[int, 1, 10] = 5):
+    await interaction.response.defer()
+    conta = await resolver_jogador(jogador, interaction)
+    ids = await riot.ids_partidas(conta["puuid"], quantidade)
+    if not ids:
+        await interaction.followup.send("Nenhuma partida encontrada para esse jogador.")
+        return
+    partidas = await asyncio.gather(*(riot.partida(i) for i in ids), return_exceptions=True)
+    linhas, vitorias, derrotas = [], 0, 0
+    for p in partidas:
+        if isinstance(p, Exception):
+            continue
+        info = p["info"]
+        eu = next((x for x in info["participants"] if x["puuid"] == conta["puuid"]), None)
+        if not eu:
+            continue
+        k, d, a = eu["kills"], eu["deaths"], eu["assists"]
+        cs = eu.get("totalMinionsKilled", 0) + eu.get("neutralMinionsKilled", 0)
+        quando = info.get("gameEndTimestamp", info.get("gameCreation", 0)) // 1000
+        if eu.get("gameEndedInEarlySurrender"):
+            icone = "⚪"
+        elif eu["win"]:
+            icone, vitorias = "✅", vitorias + 1
+        else:
+            icone, derrotas = "❌", derrotas + 1
+        linhas.append(f"{icone} **{riot.nome_por_id_interno(eu['championName'])}** {k}/{d}/{a} "
+                      f"(KDA {kda(k, d, a):.1f}) · {cs} CS · {nome_fila(info['queueId'])} · "
+                      f"{info['gameDuration'] // 60}min · <t:{quando}:R>")
+    embed = discord.Embed(title=f"Histórico de {nome_conta(conta)}",
+                          description="\n".join(linhas) or "Não consegui ler as partidas.",
+                          color=CORES["ok"] if vitorias >= derrotas else CORES["aviso"])
+    embed.set_footer(text=f"{vitorias}V {derrotas}D nas últimas {len(linhas)} partidas")
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="maestria", description="Campeões com mais maestria de um jogador")
+@app_commands.describe(jogador="Riot ID com TAG (vazio = sua conta vinculada)",
+                       quantidade="Quantos campeões (1 a 10)")
+async def cmd_maestria(interaction: discord.Interaction, jogador: str | None = None,
+                       quantidade: app_commands.Range[int, 1, 10] = 5):
+    await interaction.response.defer()
+    conta = await resolver_jogador(jogador, interaction)
+    lista = await riot.maestrias(conta["puuid"], quantidade)
+    if not lista:
+        await interaction.followup.send("Esse jogador ainda não tem maestria em nenhum campeão.")
+        return
+    medalhas = ["🥇", "🥈", "🥉"]
+    linhas = [f"{medalhas[i] if i < 3 else f'`{i + 1}.`'} **{riot.nome_campeao(m['championId'])}** — "
+              f"Nível {m['championLevel']} · {numero(m['championPoints'])} pts" for i, m in enumerate(lista)]
+    embed = discord.Embed(title=f"Maestrias de {nome_conta(conta)}", description="\n".join(linhas),
+                          color=CORES["info"])
+    if riot.url_campeao(lista[0]["championId"]):
+        embed.set_thumbnail(url=riot.url_campeao(lista[0]["championId"]))
+    await interaction.followup.send(embed=embed)
+
+
+# ================================================================ /perfil (cartão em imagem)
+@bot.tree.command(name="perfil", description="Cartão de perfil em imagem com elo, campeões e últimas partidas")
+@app_commands.describe(jogador="Riot ID com TAG (vazio = sua conta vinculada)")
+async def cmd_perfil(interaction: discord.Interaction, jogador: str | None = None):
+    await interaction.response.defer()
+    conta = await resolver_jogador(jogador, interaction)
+    puuid = conta["puuid"]
+    perfil, filas, maes, ids = await asyncio.gather(
+        riot.invocador(puuid), riot.elo(puuid), riot.maestrias(puuid, 3), riot.ids_partidas(puuid, 10))
+    partidas = await asyncio.gather(*(riot.partida(i) for i in ids), return_exceptions=True)
+
+    recentes, rotas = [], Counter()
+    for p in partidas:
+        if isinstance(p, Exception):
+            continue
+        eu = next((x for x in p["info"]["participants"] if x["puuid"] == puuid), None)
+        if not eu:
+            continue
+        res = "R" if eu.get("gameEndedInEarlySurrender") else ("V" if eu["win"] else "D")
+        recentes.append({"res": res, "k": eu["kills"], "d": eu["deaths"], "a": eu["assists"]})
+        if eu.get("teamPosition"):
+            rotas[eu["teamPosition"]] += 1
+
+    dados_cartao = {
+        "nome": conta["gameName"], "tag": conta["tagLine"], "nivel": perfil["summonerLevel"],
+        "icone": perfil["profileIconId"], "servidor": config.PLATFORM,
+        "solo": next((f for f in filas if f["queueType"] == "RANKED_SOLO_5x5"), None),
+        "flex": next((f for f in filas if f["queueType"] == "RANKED_FLEX_SR"), None),
+        "maestrias": [{"key": m["championId"], "nome": riot.nome_campeao(m["championId"]),
+                       "nivel": m["championLevel"], "pontos": m["championPoints"]} for m in maes],
+        "recentes": recentes, "rota": rotas.most_common(1)[0][0] if rotas else None,
+    }
+    arquivo = await gerar_cartao_perfil(riot, dados_cartao)
+    await interaction.followup.send(file=discord.File(arquivo, filename="perfil.png"))
+
+
+# ================================================================ /build
+async def autocompletar_campeao(interaction: discord.Interaction, atual: str):
+    return [app_commands.Choice(name=nome, value=str(key)) for key, nome in riot.sugerir_campeoes(atual)]
+
+
+ESCOLHAS_ROTA = [app_commands.Choice(name=nome, value=rota) for rota, nome in ROTAS_PT.items()]
+
+
+def botoes_sites(champ: int) -> discord.ui.View:
+    view = discord.ui.View()
+    slug = riot.slug_campeao(champ)
+    if slug:
+        view.add_item(discord.ui.Button(label="OP.GG", url=f"https://op.gg/lol/champions/{slug}/build"))
+        view.add_item(discord.ui.Button(label="U.GG", url=f"https://u.gg/lol/champions/{slug}/build"))
+    return view
+
+
+async def enviar_build(interaction: discord.Interaction, champ: int, rota: str | None, ephemeral: bool):
+    nome = riot.nome_campeao(champ)
+    b = builds.consultar(champ, rota)
+    if not b:
+        onde = f" de **{ROTAS_PT[rota]}**" if rota else ""
+        texto = (f"Ainda não tenho partidas suficientes de **{nome}**{onde} no alto elo.\n\n"
+                 f"O bot coleta partidas de Desafiante e Grão-Mestre enquanto está ligado "
+                 f"({numero(builds.total_partidas())} analisadas até agora). Campeões populares aparecem "
+                 f"em algumas horas. Enquanto isso, veja a build nos sites abaixo.")
+        if not config.COLETAR_BUILDS:
+            texto = "A coleta de builds está desligada (`COLETAR_BUILDS` no .env). Veja nos sites abaixo."
+        await interaction.followup.send(
+            embed=discord.Embed(title=f"🛠️ Build de {nome}", description=texto, color=CORES["aviso"]),
+            view=botoes_sites(champ), ephemeral=ephemeral)
+        return
+
+    embed = discord.Embed(title=f"🛠️ Build de {nome} — {ROTAS_PT[b['rota']]}", color=CORES["ouro"],
+                          description=f"Baseado em **{b['jogos']}** partidas de alto elo · "
+                                      f"**{b['wr']}%** de vitórias")
+    r = b.get("runas")
+    if r:
+        embed.add_field(name=f"Runas ({r['pct']}% · {r['wr']}% WR)", inline=False, value=(
+            f"**{riot.nome_runa(r['primaria'])}:** " + ", ".join(riot.nome_runa(x) for x in r["perks"][:4]) +
+            f"\n**{riot.nome_runa(r['secundaria'])}:** " + ", ".join(riot.nome_runa(x) for x in r["perks"][4:6])))
+    if b.get("feiticos"):
+        embed.add_field(name="Feitiços", value=" + ".join(riot.nome_feitico(x) for x in b["feiticos"]["ids"]))
+    if b.get("botas"):
+        embed.add_field(name="Botas", value=riot.nome_item(b["botas"]["id"]))
+    if b.get("itens"):
+        embed.add_field(name="Itens mais usados", inline=False, value="\n".join(
+            f"• **{riot.nome_item(i['id'])}** — {i['pct']}% ({i['wr']}% WR)" for i in b["itens"]))
+    outras = [f"{ROTAS_PT[k]} ({v})" for k, v in b["rotas"].items() if k != b["rota"]]
+    if outras:
+        embed.set_footer(text="Também jogado em: " + ", ".join(outras) + " — use a opção 'rota'")
+    arquivo = await gerar_cartao_build(riot, b)
+    embed.set_image(url="attachment://build.png")
+    await interaction.followup.send(embed=embed, file=discord.File(arquivo, filename="build.png"),
+                                    view=botoes_sites(champ), ephemeral=ephemeral)
+
+
+@bot.tree.command(name="build", description="Build mais usada no alto elo para um campeão")
+@app_commands.describe(campeao="Nome do campeão", rota="Rota (opcional)")
+@app_commands.autocomplete(campeao=autocompletar_campeao)
+@app_commands.choices(rota=ESCOLHAS_ROTA)
+async def cmd_build(interaction: discord.Interaction, campeao: str,
+                    rota: app_commands.Choice[str] | None = None):
+    champ = riot.buscar_campeao(campeao)
+    if champ is None:
+        raise RiotErro(f"Não conheço o campeão **{campeao}**.")
+    await interaction.response.defer()
+    await enviar_build(interaction, champ, rota.value if rota else None, ephemeral=False)
+
+
+class BotaoBuild(discord.ui.DynamicItem[discord.ui.Button], template=r"build:(?P<champ>\d+)"):
+    def __init__(self, champ: int, rotulo: str | None = None):
+        super().__init__(discord.ui.Button(label=rotulo or "Build", emoji="🛠️",
+                                           style=discord.ButtonStyle.secondary, custom_id=f"build:{champ}"))
+        self.champ = champ
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(int(match["champ"]))
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await enviar_build(interaction, self.champ, None, ephemeral=True)
+        except RiotErro as e:
+            await interaction.followup.send(f"❌ {e}", ephemeral=True)
+
+
+# ================================================================ raio-X da partida ao vivo
+async def montar_raio_x(jogo: dict, destaque: set[str], titulo: str = "🎮 Partida ao vivo"):
+    """Embed com elo, winrate e maestria dos 10 jogadores + força de cada time."""
+    participantes = jogo.get("participants", [])
+
+    async def detalhar(p):
+        r = {"p": p, "nome": p.get("riotId") or "", "elo": None, "solo": None, "mae": None}
+        puuid = p.get("puuid")
+        if not puuid or p.get("bot"):
+            r["nome"] = r["nome"] or "Oculto"
+            return r
+        tarefas = [riot.elo(puuid), riot.maestria_campeao(puuid, p.get("championId", 0))]
+        if not r["nome"]:
+            tarefas.append(riot.conta_por_puuid(puuid))
+        res = await asyncio.gather(*tarefas, return_exceptions=True)
+        if not isinstance(res[0], Exception):
+            r["elo"] = melhor_fila(res[0])
+            r["solo"] = next((e for e in res[0] if e["queueType"] == "RANKED_SOLO_5x5"), None)
+        if not isinstance(res[1], Exception):
+            r["mae"] = res[1]
+        if len(res) > 2 and not isinstance(res[2], Exception):
+            r["nome"] = f"{res[2]['gameName']}#{res[2]['tagLine']}"
+        return r
+
+    detalhes = await asyncio.gather(*(detalhar(p) for p in participantes))
+    times: dict[int, list] = defaultdict(list)
+    for r in detalhes:
+        times[r["p"].get("teamId", 0)].append(r)
+
+    forcas = {}
+    for t, lista in times.items():
+        valores = [pontuacao_elo(r["solo"]) for r in lista if r["solo"]]
+        forcas[t] = sum(valores) / len(valores) if valores else None
+
+    fila = jogo.get("gameQueueConfigId", 0)
+    inicio = jogo.get("gameStartTime") or 0
+    desc = [f"**{nome_fila(fila)}**" + (f" · começou <t:{inicio // 1000}:R>" if inicio else "")]
+    azul, vermelho = forcas.get(100), forcas.get(200)
+    if azul is not None and vermelho is not None:
+        medias = f"média {texto_pontuacao(azul)} × {texto_pontuacao(vermelho)}"
+        if abs(azul - vermelho) < 50:
+            desc.append(f"⚖️ Partida equilibrada ({medias})")
+        else:
+            fav = "🔵 Time Azul" if azul > vermelho else "🔴 Time Vermelho"
+            desc.append(f"📊 Favorito no papel: **{fav}** ({medias})")
+    embed = discord.Embed(title=titulo, description="\n".join(desc), color=CORES["ok"])
+
+    nomes_time = {100: "🔵 Time Azul", 200: "🔴 Time Vermelho"}
+    for t in sorted(times):
+        linhas = []
+        for r in times[t]:
+            p = r["p"]
+            estrela = "⭐ " if p.get("puuid") in destaque else ""
+            e = r["elo"]
+            elo_txt = f"{tier_curto(e)} {e['leaguePoints']} PDL · {winrate(e)}% WR" if e else "Sem rank"
+            m = r["mae"]
+            mae_txt = f"M{m['championLevel']} ({compacto(m['championPoints'])})" if m else "sem maestria"
+            linhas.append(f"{estrela}**{riot.nome_campeao(p.get('championId', 0))}** — "
+                          f"{escape_markdown(r['nome'])}\n　{elo_txt} · {mae_txt}")
+        embed.add_field(name=nomes_time.get(t, f"Time {t}"), value="\n".join(linhas)[:1024] or "—", inline=False)
+    return embed, forcas
+
+
+@bot.tree.command(name="aovivo", description="Raio-X da partida atual: elo e maestria dos 10 jogadores")
+@app_commands.describe(jogador="Riot ID com TAG (vazio = sua conta vinculada)")
+async def cmd_aovivo(interaction: discord.Interaction, jogador: str | None = None):
+    await interaction.response.defer()
+    conta = await resolver_jogador(jogador, interaction)
+    jogo = await riot.partida_ao_vivo(conta["puuid"])
+    if not jogo:
+        await interaction.followup.send(embed=discord.Embed(
+            description=f"💤 **{escape_markdown(nome_conta(conta))}** não está em partida agora.",
+            color=CORES["aviso"]))
+        return
+    embed, _ = await montar_raio_x(jogo, {conta["puuid"]}, f"🎮 {nome_conta(conta)} está em partida!")
+    eu = next((p for p in jogo["participants"] if p.get("puuid") == conta["puuid"]), None)
+    view = None
+    if eu and riot.url_campeao(eu.get("championId")):
+        embed.set_thumbnail(url=riot.url_campeao(eu["championId"]))
+        view = discord.ui.View()
+        view.add_item(BotaoBuild(eu["championId"], f"Build de {riot.nome_campeao(eu['championId'])}"))
+    await interaction.followup.send(embed=embed, view=view or discord.utils.MISSING)
+
+
+# ================================================================ /vincular /desvincular /ranking
+@bot.tree.command(name="vincular", description="Liga sua conta do Discord ao seu Riot ID")
+@app_commands.guild_only()
+@app_commands.describe(jogador="Seu Riot ID com TAG, ex.: Faker#KR1")
+async def cmd_vincular(interaction: discord.Interaction, jogador: str):
+    await interaction.response.defer(ephemeral=True)
+    conta = await riot.conta(jogador)
+    await riot.invocador(conta["puuid"])
+    store.de("vinculos", interaction.guild.id)[str(interaction.user.id)] = {
+        "puuid": conta["puuid"], "riot_id": nome_conta(conta)}
+    store.carteira(interaction.guild.id, interaction.user.id)
+    store.salvar()
+    await interaction.followup.send(embed=discord.Embed(
+        description=f"✅ Conta vinculada a **{escape_markdown(nome_conta(conta))}**.\n"
+                    f"Você entrou no `/ranking`, recebe avisos de partida e ganhou "
+                    f"**{numero(config.SALDO_INICIAL)} moedas** para apostar.", color=CORES["ok"]))
+
+
+@bot.tree.command(name="desvincular", description="Remove o vínculo da sua conta")
+@app_commands.guild_only()
+async def cmd_desvincular(interaction: discord.Interaction):
+    removido = store.de("vinculos", interaction.guild.id).pop(str(interaction.user.id), None)
+    store.salvar()
+    await interaction.response.send_message("✅ Vínculo removido." if removido else
+                                            "Você não tinha conta vinculada.", ephemeral=True)
+
+
+@bot.tree.command(name="ranking", description="Ranking de elo (Solo/Duo e Flex) dos membros vinculados")
+@app_commands.guild_only()
+@app_commands.describe(fila="Qual fila mostrar (padrão: as duas)")
+@app_commands.choices(fila=[app_commands.Choice(name="Solo/Duo e Flex", value="ambas"),
+                            app_commands.Choice(name="Solo/Duo", value="RANKED_SOLO_5x5"),
+                            app_commands.Choice(name="Flex", value="RANKED_FLEX_SR")])
+async def cmd_ranking(interaction: discord.Interaction, fila: app_commands.Choice[str] | None = None):
+    await interaction.response.defer()
+    vinculos = store.de("vinculos", interaction.guild.id)
+    if not vinculos:
+        await interaction.followup.send("Ninguém vinculou a conta ainda. Use `/vincular Nome#TAG`.")
+        return
+
+    async def buscar(uid, v):
+        try:
+            return uid, v["riot_id"], await riot.elo(v["puuid"])
+        except RiotErro:
+            return None
+
+    resultados = [r for r in await asyncio.gather(*(buscar(u, v) for u, v in vinculos.items())) if r]
+    escolha = fila.value if fila else "ambas"
+    tipos = ["RANKED_SOLO_5x5", "RANKED_FLEX_SR"] if escolha == "ambas" else [escolha]
+    titulos = {"RANKED_SOLO_5x5": "🏆 Ranking Solo/Duo", "RANKED_FLEX_SR": "👥 Ranking Flex"}
+    medalhas = ["🥇", "🥈", "🥉"]
+    embeds = []
+    for tipo in tipos:
+        lista = []
+        sem = []
+        for uid, rid, filas in resultados:
+            e = next((f for f in filas if f["queueType"] == tipo), None)
+            (lista if e else sem).append((uid, rid, e))
+        lista.sort(key=lambda r: pontuacao_elo(r[2]), reverse=True)
+        linhas = []
+        for i, (uid, rid, e) in enumerate(lista[:20]):
+            pos = medalhas[i] if i < 3 else f"`{i + 1}.`"
+            linhas.append(f"{pos} <@{uid}> · {escape_markdown(rid)}\n　**{texto_elo(e)}** · "
+                          f"{winrate(e)}% WR ({plural(e['wins'] + e['losses'], 'jogo')})")
+        if not linhas:
+            linhas.append("Ninguém tem classificação nessa fila ainda.")
+        if sem:
+            linhas.append("\n**Sem classificação:** " + ", ".join(f"<@{u}>" for u, _, _ in sem))
+        embeds.append(discord.Embed(title=f"{titulos[tipo]} — {interaction.guild.name}",
+                                    description="\n".join(linhas)[:4000],
+                                    color=CORES["info"] if tipo == "RANKED_SOLO_5x5" else 0x9B59B6))
+    await interaction.followup.send(embeds=embeds, allowed_mentions=SEM_MENCAO)
+
+
+# ================================================================ apostas
+def checar_aposta(partida: dict | None, user_id: int, time_id: int) -> str | None:
+    if not partida:
+        return "Essa partida já terminou."
+    if time.time() > partida.get("apostas_ate", 0):
+        return "As apostas dessa partida já fecharam. ⏰"
+    if str(user_id) in partida["apostas"]:
+        return "Você já apostou nessa partida."
+    jogador = partida["jogadores"].get(str(user_id))
+    if jogador and jogador["time"] != time_id:
+        return "Você não pode apostar contra o seu próprio time. 😅"
+    return None
+
+
+class ModalAposta(discord.ui.Modal):
+    valor = discord.ui.TextInput(label="Quantas moedas?", placeholder="ex.: 100", max_length=9)
+
+    def __init__(self, g: str, jogo: str, time_id: int, saldo: int):
+        super().__init__(title=f"Apostar no {TIMES_PT[time_id]}")
+        self.g, self.jogo, self.time_id = g, jogo, time_id
+        self.valor.placeholder = f"Você tem {numero(saldo)} moedas"
+
+    async def on_submit(self, interaction: discord.Interaction):
+        partida = store.de("partidas", self.g).get(self.jogo)
+        erro = checar_aposta(partida, interaction.user.id, self.time_id)
+        texto = self.valor.value.strip().replace(".", "").lower()
+        carteira = store.carteira(self.g, interaction.user.id)
+        valor = carteira["saldo"] if texto in ("tudo", "allin", "all in", "all") else None
+        if valor is None:
+            valor = int(texto) if texto.isdigit() else 0
+        if not erro and valor <= 0:
+            erro = "Digite um número de moedas válido (ou `tudo`)."
+        if not erro and valor > carteira["saldo"]:
+            erro = f"Você só tem **{numero(carteira['saldo'])}** moedas. Use `/diario` para ganhar mais."
+        if erro:
+            await interaction.response.send_message(f"❌ {erro}", ephemeral=True)
+            return
+        odd = partida["odds"][str(self.time_id)]
+        carteira["saldo"] -= valor
+        partida["apostas"][str(interaction.user.id)] = {"time": self.time_id, "valor": valor, "odd": odd}
+        store.salvar()
+        emoji = "🔵" if self.time_id == 100 else "🔴"
+        await interaction.response.send_message(
+            f"💰 {interaction.user.mention} apostou **{numero(valor)}** moedas no {emoji} **{TIMES_PT[self.time_id]}** "
+            f"(paga {odd:.2f}x → {numero(int(valor * odd))})", allowed_mentions=SEM_MENCAO)
+
+
+class BotaoAposta(discord.ui.DynamicItem[discord.ui.Button],
+                  template=r"aposta:(?P<g>\d+):(?P<jogo>\d+):(?P<time>\d+)"):
+    def __init__(self, g, jogo, time_id: int, rotulo: str | None = None):
+        estilo = discord.ButtonStyle.primary if time_id == 100 else discord.ButtonStyle.danger
+        super().__init__(discord.ui.Button(label=rotulo or "Apostar", emoji="💰", style=estilo,
+                                           custom_id=f"aposta:{g}:{jogo}:{time_id}"))
+        self.g, self.jogo, self.time_id = str(g), str(jogo), int(time_id)
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match["g"], match["jogo"], int(match["time"]))
+
+    async def callback(self, interaction: discord.Interaction):
+        partida = store.de("partidas", self.g).get(self.jogo)
+        erro = checar_aposta(partida, interaction.user.id, self.time_id)
+        if erro:
+            await interaction.response.send_message(f"❌ {erro}", ephemeral=True)
+            return
+        saldo = store.carteira(self.g, interaction.user.id)["saldo"]
+        await interaction.response.send_modal(ModalAposta(self.g, self.jogo, self.time_id, saldo))
+
+
+@bot.tree.command(name="carteira", description="Mostra suas moedas (ou de outro membro)")
+@app_commands.guild_only()
+async def cmd_carteira(interaction: discord.Interaction, membro: discord.Member | None = None):
+    alvo = membro or interaction.user
+    c = store.carteira(interaction.guild.id, alvo.id)
+    abertas = sum(1 for p in store.de("partidas", interaction.guild.id).values() if str(alvo.id) in p["apostas"])
+    store.salvar()
+    texto = f"💰 **{numero(c['saldo'])}** moedas"
+    if abertas:
+        texto += f"\n🎲 {abertas} aposta(s) em andamento"
+    await interaction.response.send_message(embed=discord.Embed(
+        title=f"Carteira de {alvo.display_name}", description=texto, color=CORES["ouro"]))
+
+
+@bot.tree.command(name="diario", description="Pega suas moedas grátis do dia")
+@app_commands.guild_only()
+async def cmd_diario(interaction: discord.Interaction):
+    c = store.carteira(interaction.guild.id, interaction.user.id)
+    espera = c["diario"] + 20 * 3600 - time.time()
+    if espera > 0:
+        await interaction.response.send_message(
+            f"⏳ Você já pegou hoje. Volte <t:{int(time.time() + espera)}:R>.", ephemeral=True)
+        return
+    c["saldo"] += config.BONUS_DIARIO
+    c["diario"] = time.time()
+    store.salvar()
+    await interaction.response.send_message(
+        f"🎁 +**{config.BONUS_DIARIO}** moedas! Agora você tem **{numero(c['saldo'])}**.")
+
+
+@bot.tree.command(name="top-moedas", description="Quem tem mais moedas no servidor")
+@app_commands.guild_only()
+async def cmd_top_moedas(interaction: discord.Interaction):
+    carteiras = store.de("moedas", interaction.guild.id)
+    if not carteiras:
+        await interaction.response.send_message("Ninguém tem moedas ainda. Use `/vincular` ou `/diario`.")
+        return
+    top = sorted(carteiras.items(), key=lambda kv: -kv[1]["saldo"])[:10]
+    medalhas = ["🥇", "🥈", "🥉"]
+    linhas = [f"{medalhas[i] if i < 3 else f'`{i + 1}.`'} <@{u}> — **{numero(c['saldo'])}** moedas"
+              for i, (u, c) in enumerate(top)]
+    await interaction.response.send_message(embed=discord.Embed(
+        title="💰 Mais ricos do servidor", description="\n".join(linhas), color=CORES["ouro"]),
+        allowed_mentions=SEM_MENCAO)
+
+
+# ================================================================ alertas: início e fim de partida
+@bot.tree.command(name="config-alertas", description="Canal dos avisos de partida, resumos e apostas")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.describe(canal="Canal onde os avisos serão enviados")
+async def cmd_config_alertas(interaction: discord.Interaction, canal: discord.TextChannel):
+    perms = canal.permissions_for(interaction.guild.me)
+    if not (perms.send_messages and perms.embed_links):
+        await interaction.response.send_message(
+            f"❌ Preciso de permissão para enviar mensagens e embeds em {canal.mention}.",
+            ephemeral=True)
+        return
+    store.d["alertas"][str(interaction.guild.id)] = canal.id
+    store.salvar()
+    await interaction.response.send_message(
+        f"✅ Pronto! Em {canal.mention} vou postar:\n"
+        f"• 🎮 quando alguém vinculado entrar em partida (com raio-X e apostas)\n"
+        f"• 🏁 o resumo quando a partida acabar (nota, MVP, PDL)\n"
+        f"• 📅 o resumo da semana\nVerifico a cada {config.INTERVALO_ALERTA} min.", ephemeral=True)
+
+
+@bot.tree.command(name="desativar-alertas", description="Desliga os avisos de partida neste servidor")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(manage_guild=True)
+async def cmd_desativar_alertas(interaction: discord.Interaction):
+    store.d["alertas"].pop(str(interaction.guild.id), None)
+    store.salvar()
+    await interaction.response.send_message("✅ Alertas desativados.", ephemeral=True)
+
+
+async def nova_partida(g: str, canal, game_id: str, jogo: dict, usuarios: list[str]):
+    vinculos = store.de("vinculos", g)
+    jogadores = {}
+    for u in usuarios:
+        v = vinculos[u]
+        eu = next((p for p in jogo["participants"] if p.get("puuid") == v["puuid"]), {})
+        elo_antes = {}
+        try:
+            for e in await riot.elo(v["puuid"]):
+                elo_antes[e["queueType"]] = {k: e[k] for k in ("tier", "rank", "leaguePoints", "wins", "losses")}
+        except RiotErro:
+            pass
+        jogadores[u] = {"puuid": v["puuid"], "riot_id": v["riot_id"], "time": eu.get("teamId", 0),
+                        "campeao": eu.get("championId", 0), "elo_antes": elo_antes}
+
+    embed, forcas = await montar_raio_x(jogo, {j["puuid"] for j in jogadores.values()})
+    fila = jogo.get("gameQueueConfigId", 0)
+    times = {p.get("teamId") for p in jogo["participants"]}
+    pode_apostar = times == {100, 200} and fila != 0 and jogo.get("gameLength", 0) < 10 * 60
+    odds = calcular_odds(forcas.get(100), forcas.get(200))
+    apostas_ate = time.time() + config.TEMPO_APOSTAS_MIN * 60 if pode_apostar else 0
+
+    view = discord.ui.View(timeout=None)
+    if pode_apostar:
+        embed.add_field(name="💰 Apostas abertas", inline=False,
+                        value=f"Fecham <t:{int(apostas_ate)}:R>. 🔵 paga **{odds['100']:.2f}x** · "
+                              f"🔴 paga **{odds['200']:.2f}x**")
+        view.add_item(BotaoAposta(g, game_id, 100, f"Azul vence ({odds['100']:.2f}x)"))
+        view.add_item(BotaoAposta(g, game_id, 200, f"Vermelho vence ({odds['200']:.2f}x)"))
+    for champ in list(dict.fromkeys(j["campeao"] for j in jogadores.values() if j["campeao"]))[:3]:
+        view.add_item(BotaoBuild(champ, f"Build {riot.nome_campeao(champ)}"))
+    primeiro = next(iter(jogadores.values()))
+    if riot.url_campeao(primeiro["campeao"]):
+        embed.set_thumbnail(url=riot.url_campeao(primeiro["campeao"]))
+
+    mencoes = ", ".join(f"<@{u}>" for u in jogadores)
+    texto = f"🎮 {mencoes} {'entrou' if len(jogadores) == 1 else 'entraram'} em partida!"
+    try:
+        await canal.send(content=texto, embed=embed, view=view, allowed_mentions=SEM_MENCAO)
+    except discord.HTTPException as e:
+        log.warning("Não consegui postar alerta: %s", e)
+    store.de("partidas", g)[game_id] = {
+        "jogadores": jogadores, "fila": fila, "inicio": time.time(), "odds": odds,
+        "apostas_ate": apostas_ate, "apostas": {}}
+
+
+def liquidar_apostas(g: str, partida: dict, vencedor: int | None, remake: bool) -> list[str]:
+    linhas = []
+    for u, a in partida.get("apostas", {}).items():
+        c = store.carteira(g, u)
+        if remake or vencedor is None:
+            c["saldo"] += a["valor"]
+            linhas.append(f"↩️ <@{u}> recebeu de volta {numero(a['valor'])}")
+        elif a["time"] == vencedor:
+            premio = int(a["valor"] * a["odd"])
+            c["saldo"] += premio
+            linhas.append(f"🤑 <@{u}> ganhou **{numero(premio)}** (+{numero(premio - a['valor'])})")
+        else:
+            linhas.append(f"💸 <@{u}> perdeu {numero(a['valor'])}")
+    return linhas
+
+
+async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depois: dict[str, list]):
+    info = partida["info"]
+    ps = info["participants"]
+    notas = calcular_notas(info)
+    remake = info.get("gameDuration", 0) < 300 or any(p.get("gameEndedInEarlySurrender") for p in ps)
+    vencedor = next((p["teamId"] for p in ps if p.get("win")), None)
+    fila = info.get("queueId", 0)
+    tipo = FILA_PARA_TIPO.get(fila)
+    dano_time = defaultdict(int)
+    abates_time = defaultdict(int)
+    for p in ps:
+        dano_time[p["teamId"]] += p.get("totalDamageDealtToChampions", 0)
+        abates_time[p["teamId"]] += p["kills"]
+
+    minutos = max(info.get("gameDuration", 60), 60) / 60
+    resultados = []
+    embed = discord.Embed(title=f"🏁 Fim de partida — {nome_fila(fila)}",
+                          description=f"Duração: {int(minutos)}min", color=CORES["info"])
+    for u, j in partida_salva["jogadores"].items():
+        eu = next((p for p in ps if p["puuid"] == j["puuid"]), None)
+        if not eu:
+            continue
+        k, d, a = eu["kills"], eu["deaths"], eu["assists"]
+        champ = riot.nome_por_id_interno(eu["championName"])
+        if remake:
+            res = "⚪ Remake"
+        elif fila == 1700 and eu.get("placement"):
+            res = f"🏅 {eu['placement']}º lugar"
+        else:
+            res = "✅ Vitória" if eu.get("win") else "❌ Derrota"
+        resultados.append(eu.get("win"))
+        nota = notas.get(eu["puuid"], {})
+        selo = " 🏆 **MVP**" if nota.get("mvp") else (" 🎖️ **ACE**" if nota.get("ace") else "")
+        cs = eu.get("totalMinionsKilled", 0) + eu.get("neutralMinionsKilled", 0)
+        dano = eu.get("totalDamageDealtToChampions", 0)
+        pct_dano = round(dano / max(dano_time[eu["teamId"]], 1) * 100)
+        kp = round((k + a) / max(abates_time[eu["teamId"]], 1) * 100)
+        linhas = [f"<@{u}> de **{champ}** — **{k}/{d}/{a}** (KDA {kda(k, d, a):.1f})",
+                  f"💥 {numero(dano)} de dano ({pct_dano}% do time) · 🗡️ {kp}% de participação",
+                  f"🌾 {cs} CS ({cs / minutos:.1f}/min) · 👁️ visão {eu.get('visionScore', 0)} · 💰 {numero(eu.get('goldEarned', 0))}",
+                  f"⭐ Nota **{nota.get('nota', '-')}**/10{selo}"]
+        for chave, texto in (("pentaKills", "🔥🔥 **PENTAKILL!!!**"), ("quadraKills", "🔥 **QUADRA KILL!**")):
+            if eu.get(chave):
+                linhas.append(texto)
+                break
+        pdl = None
+        if tipo and u in depois and not remake:
+            agora = next((e for e in depois[u] if e["queueType"] == tipo), None)
+            antes = j["elo_antes"].get(tipo)
+            atualizou = agora and (not antes or agora["wins"] + agora["losses"] != antes["wins"] + antes["losses"])
+            if atualizou:
+                txt, pdl = texto_variacao(antes, agora)
+                linhas.append(txt)
+        # moedas para quem jogou
+        if not remake:
+            bonus = (50 if eu.get("win") else 0) + (100 if nota.get("mvp") or nota.get("ace") else 0)
+            if bonus:
+                store.carteira(g, u)["saldo"] += bonus
+                linhas.append(f"🪙 +{bonus} moedas")
+        embed.add_field(name=f"{res} · {j['riot_id']}", value="\n".join(linhas)[:1024], inline=False)
+        store.historico(g).append({
+            "user": u, "ts": time.time(), "campeao": champ, "vitoria": bool(eu.get("win")),
+            "k": k, "d": d, "a": a, "nota": nota.get("nota", 0), "mvp": bool(nota.get("mvp")),
+            "pdl": pdl, "fila": fila, "remake": remake, "penta": bool(eu.get("pentaKills"))})
+
+    if resultados and not remake:
+        embed.color = CORES["ok"] if all(resultados) else (CORES["erro"] if not any(resultados) else CORES["info"])
+    apostas = liquidar_apostas(g, partida_salva, vencedor, remake)
+    if apostas:
+        embed.add_field(name="💰 Apostas", value="\n".join(apostas)[:1024], inline=False)
+    primeiro = next(iter(partida_salva["jogadores"].values()))
+    if riot.url_campeao(primeiro["campeao"]):
+        embed.set_thumbnail(url=riot.url_campeao(primeiro["campeao"]))
+    try:
+        await canal.send(embed=embed, allowed_mentions=SEM_MENCAO)
+    except discord.HTTPException as e:
+        log.warning("Não consegui postar resumo: %s", e)
+
+
+async def processar_pendentes(g: str, canal):
+    pendentes = store.de("pendentes", g)
+    for game_id, p in list(pendentes.items()):
+        try:
+            partida = await riot.partida(f"{config.PLATFORM.upper()}_{game_id}")
+        except NaoEncontrado:
+            p["tentativas"] = p.get("tentativas", 0) + 1
+            if p["tentativas"] > 20:  # a partida nunca apareceu (ex.: personalizada)
+                for linha in liquidar_apostas(g, p, None, True):
+                    log.info("Reembolso: %s", linha)
+                pendentes.pop(game_id)
+            continue
+        except RiotErro as e:
+            log.warning("Erro ao buscar partida %s: %s", game_id, e)
+            continue
+
+        depois: dict[str, list] = {}
+        tipo = FILA_PARA_TIPO.get(partida["info"].get("queueId"))
+        esperar = False
+        if tipo:
+            for u, j in p["jogadores"].items():
+                try:
+                    depois[u] = await riot.elo(j["puuid"])
+                except RiotErro:
+                    continue
+                antes = j["elo_antes"].get(tipo)
+                agora = next((e for e in depois[u] if e["queueType"] == tipo), None)
+                if antes and agora and agora["wins"] + agora["losses"] == antes["wins"] + antes["losses"]:
+                    esperar = True  # a Riot ainda não atualizou o PDL
+        if esperar and p.get("tentativas", 0) < 3:
+            p["tentativas"] = p.get("tentativas", 0) + 1
+            continue
+        await postar_resumo(g, canal, p, partida, depois)
+        pendentes.pop(game_id, None)
+
+
+async def verificar_servidor(g: str, canal_id: int):
+    canal = bot.get_channel(int(canal_id))
+    if canal is None:
+        return
+    vinculos = store.de("vinculos", g)
+    partidas = store.de("partidas", g)
+    ativos: dict[str, dict] = {}
+    em_jogo: dict[str, str] = {}
+    checados = set()
+    for u, v in list(vinculos.items()):
+        try:
+            jogo = await riot.partida_ao_vivo(v["puuid"])
+        except RiotErro as e:
+            log.warning("Erro ao checar %s: %s", v["riot_id"], e)
+            continue
+        checados.add(u)
+        if jogo:
+            gid = str(jogo["gameId"])
+            ativos[gid] = jogo
+            em_jogo[u] = gid
+
+    # partidas que acabaram
+    for gid, p in list(partidas.items()):
+        if gid in ativos:
+            continue
+        acabou = all(u in checados for u in p["jogadores"]) or time.time() - p["inicio"] > 3 * 3600
+        if acabou:
+            p["tentativas"] = 0
+            store.de("pendentes", g)[gid] = partidas.pop(gid)
+
+    # partidas novas
+    for gid, jogo in ativos.items():
+        usuarios = [u for u, x in em_jogo.items() if x == gid]
+        if gid in partidas or gid in store.de("pendentes", g):
+            continue
+        await nova_partida(g, canal, gid, jogo, usuarios)
+
+    await processar_pendentes(g, canal)
+
+
+@tasks.loop(minutes=config.INTERVALO_ALERTA)
+async def loop_partidas():
+    for g, canal_id in list(store.d["alertas"].items()):
+        try:
+            await verificar_servidor(g, canal_id)
+        except Exception:
+            log.exception("Erro verificando partidas do servidor %s", g)
+    store.salvar()
+
+
+@loop_partidas.before_loop
+async def _antes_partidas():
+    await bot.wait_until_ready()
+
+
+# ================================================================ resumo semanal
+def montar_semana(g: str, dias: int = 7):
+    limite = time.time() - dias * 86400
+    hist = [e for e in store.historico(g) if e["ts"] >= limite and not e.get("remake")]
+    if not hist:
+        return None, None
+    por = defaultdict(list)
+    for e in hist:
+        por[e["user"]].append(e)
+
+    def media(u, campo):
+        return sum(e[campo] for e in por[u]) / len(por[u])
+
+    def wr(u):
+        return sum(e["vitoria"] for e in por[u]) / len(por[u]) * 100
+
+    linhas = []
+    elegiveis = [u for u in por if len(por[u]) >= 3] or list(por)
+    mvp = max(elegiveis, key=lambda u: media(u, "nota"))
+    linhas.append(f"🏆 **MVP da semana:** <@{mvp}> — nota média **{media(mvp, 'nota'):.1f}** "
+                  f"em {plural(len(por[mvp]), 'partida')} (+500 moedas)")
+    viciado = max(por, key=lambda u: len(por[u]))
+    linhas.append(f"🎮 **Viciado:** <@{viciado}> — {plural(len(por[viciado]), 'partida')}")
+    vitorioso = max(por, key=lambda u: (sum(e["vitoria"] for e in por[u]), wr(u)))
+    linhas.append(f"✅ **Mais vitórias:** <@{vitorioso}> — {sum(e['vitoria'] for e in por[vitorioso])} "
+                  f"({wr(vitorioso):.0f}% WR)")
+    pdl = {u: sum(e["pdl"] for e in es if e.get("pdl") is not None) for u, es in por.items()
+           if any(e.get("pdl") is not None for e in es)}
+    if pdl:
+        subiu = max(pdl, key=pdl.get)
+        if pdl[subiu] > 0:
+            linhas.append(f"📈 **Mais PDL ganho:** <@{subiu}> — +{pdl[subiu]} PDL")
+        caiu = min(pdl, key=pdl.get)
+        if pdl[caiu] < 0:
+            linhas.append(f"📉 **Mais PDL perdido:** <@{caiu}> — {pdl[caiu]} PDL")
+    morreu = max(por, key=lambda u: sum(e["d"] for e in por[u]))
+    linhas.append(f"💀 **Quem mais morreu:** <@{morreu}> — {sum(e['d'] for e in por[morreu])} mortes "
+                  f"({media(morreu, 'd'):.1f} por jogo)")
+    if len(elegiveis) > 1:
+        frio = min(elegiveis, key=wr)
+        if wr(frio) < 50:
+            linhas.append(f"🥶 **Pé frio:** <@{frio}> — {wr(frio):.0f}% de vitórias")
+    melhor = max(hist, key=lambda e: e["nota"])
+    linhas.append(f"\n⭐ **Melhor partida:** <@{melhor['user']}> de {melhor['campeao']} "
+                  f"{melhor['k']}/{melhor['d']}/{melhor['a']} (nota {melhor['nota']})")
+    pentas = [e for e in hist if e.get("penta")]
+    if pentas:
+        linhas.append("🔥 **Pentakills:** " + ", ".join(f"<@{e['user']}> de {e['campeao']}" for e in pentas))
+    vit = sum(e["vitoria"] for e in hist)
+    embed = discord.Embed(title="📅 Resumo da semana", description="\n".join(linhas), color=CORES["ouro"])
+    embed.set_footer(text=f"{len(hist)} partidas do servidor · {vit}V {len(hist) - vit}D")
+    return embed, mvp
+
+
+@bot.tree.command(name="semana", description="Resumo dos últimos 7 dias do servidor")
+@app_commands.guild_only()
+async def cmd_semana(interaction: discord.Interaction):
+    embed, _ = montar_semana(str(interaction.guild.id))
+    if not embed:
+        await interaction.response.send_message(
+            "Ainda não tenho partidas registradas nesta semana. As partidas são registradas quando "
+            "os alertas estão ligados (`/config-alertas`).", ephemeral=True)
+        return
+    embed.description = embed.description.replace(" (+500 moedas)", "")
+    embed.title = "📅 Últimos 7 dias"
+    await interaction.response.send_message(embed=embed, allowed_mentions=SEM_MENCAO)
+
+
+@tasks.loop(minutes=20)
+async def loop_semanal():
+    agora = datetime.now(FUSO)
+    if agora.weekday() != config.RESUMO_DIA or agora.hour < config.RESUMO_HORA:
+        return
+    semana = agora.strftime("%G-W%V")
+    for g, canal_id in list(store.d["alertas"].items()):
+        if store.d["resumo_semanal"].get(g) == semana:
+            continue
+        canal = bot.get_channel(int(canal_id))
+        if canal is None:
+            continue
+        store.d["resumo_semanal"][g] = semana
+        embed, mvp = montar_semana(g)
+        if not embed:
+            continue
+        if mvp:
+            store.carteira(g, mvp)["saldo"] += 500
+        try:
+            await canal.send(embed=embed, allowed_mentions=SEM_MENCAO)
+        except discord.HTTPException as e:
+            log.warning("Não consegui postar resumo semanal: %s", e)
+    store.limpar_historico()
+    store.salvar()
+
+
+@loop_semanal.before_loop
+async def _antes_semanal():
+    await bot.wait_until_ready()
+
+
+# ================================================================ coleta de builds
+@tasks.loop(seconds=75)
+async def loop_builds():
+    try:
+        await builds.ciclo()
+    except RiotErro as e:
+        log.warning("Coleta de builds: %s", e)
+    except Exception:
+        log.exception("Erro na coleta de builds")
+
+
+@loop_builds.before_loop
+async def _antes_builds():
+    await bot.wait_until_ready()
+
+
+# ================================================================ /ajuda
+@bot.tree.command(name="ajuda", description="Lista os comandos do bot")
+async def cmd_ajuda(interaction: discord.Interaction):
+    embed = discord.Embed(title="📖 Comandos", color=CORES["info"])
+    embed.add_field(name="🔎 Consultas", inline=False, value=(
+        "`/perfil` — cartão de perfil em imagem\n"
+        "`/elo` — elo, PDL e winrate\n"
+        "`/historico` — últimas partidas\n"
+        "`/maestria` — campeões com mais maestria\n"
+        "`/aovivo` — raio-X da partida atual (elo dos 10 jogadores)\n"
+        "`/build campeão` — build mais usada no alto elo"))
+    embed.add_field(name="👥 Servidor", inline=False, value=(
+        "`/vincular Nome#TAG` — liga sua conta\n"
+        "`/ranking` — ranking de elo (Solo/Duo e Flex)\n"
+        "`/semana` — resumo dos últimos 7 dias\n"
+        "`/config-alertas #canal` — avisos, resumos e apostas (admin)"))
+    embed.add_field(name="💰 Apostas (moedas fictícias)", inline=False, value=(
+        "Aposte pelos botões quando alguém entrar em partida.\n"
+        "`/carteira` · `/diario` · `/top-moedas`"))
+    embed.set_footer(text="Sem o Nome#TAG, os comandos usam a sua conta vinculada.")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ================================================================ iniciar
+if __name__ == "__main__":
+    faltando = [n for n, v in (("DISCORD_TOKEN", config.DISCORD_TOKEN), ("RIOT_API_KEY", config.RIOT_API_KEY))
+                if not v or v.startswith("cole_")]
+    if faltando:
+        raise SystemExit(f"Preencha no arquivo .env: {', '.join(faltando)}")
+    bot.run(config.DISCORD_TOKEN, log_handler=None)
