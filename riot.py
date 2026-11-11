@@ -153,7 +153,14 @@ class RiotAPI:
             }
             log.info("Ultimate Bravery (mapa %s): %d itens lendários, %d botas, %d feitiços",
                      mapa, len(lendarios), len(botas), len(magias))
+        resultado["feiticos_key"] = {int(f["key"]): f["name"] for f in feiticos["data"].values()}
         return resultado
+
+    async def nomes_feiticos(self) -> dict[int, str]:
+        """Número do feitiço -> nome em português (ex.: 4 -> 'Flash')."""
+        if not self._bravery or self._bravery["versao"] != self.versao:
+            self._bravery = await self._baixar_bravery()
+        return self._bravery["feiticos_key"]
 
     # ------------------------------------------------------------ nomes e imagens
     def nome_campeao(self, key: int) -> str:
