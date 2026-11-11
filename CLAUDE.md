@@ -23,6 +23,10 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
   combinações raras cortadas, até 300 mil ids de partidas vistas). KR/EUW têm `Limitador` próprio (o limite da
   Riot é por região); BR usa o limitador principal e só até 50% dos 100/2min, para sobrar para os alertas.
   Ritmo: `COLETA_PARTIDAS_HORA` por região (padrão 120; ~85 KB por partida). O OP.GG foi removido (2026-11-11).
+- `loja.py` — catálogo (`ITENS`) e regras da loja (`DadosLoja`: enfeite 👑/emoji, seguro/odd turbinada nas
+  apostas, rifa, desafio Bravery, escudo, imunidade de 10 min, `pendentes` para desmutar/devolver apelido).
+  Os comandos `/loja`, `/comprar`, `/bloquear-apelido`, `/config-loja`, o `loop_loja` (20 s) e o
+  `on_voice_state_update` (desmuta quem volta para a call) ficam no `bot.py`. Compra só é cobrada se o efeito der certo.
 - `dados.py` — persistência em `dados.json` (vínculos, canal de alertas, partidas em andamento,
   pendentes, histórico, moedas, controle do resumo semanal). Tudo indexado por id do servidor.
 - `config.py` — lê o `.env`.
@@ -30,7 +34,7 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 ## Comandos
 `/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores), `/build campeão [rota] [modo]` (coleta própria Mestre+, modo Solo/Duo ou Flex; mínimo 20 partidas, usa o patch anterior se o atual tiver pouco), `/ultimate-bravery [mapa]` (sorteio; itens/feitiços baixados no 1º uso, IDs < 10000),
 `/vincular`, `/desvincular`, `/ranking [fila]` (Solo/Duo e Flex),
-`/semana`, `/carteira`, `/diario`, `/top-moedas`, `/config-alertas`, `/desativar-alertas`, `/ajuda`.
+`/semana`, `/carteira`, `/diario`, `/top-moedas`, `/loja`, `/comprar`, `/bloquear-apelido`, `/config-loja`, `/config-alertas`, `/desativar-alertas`, `/ajuda`.
 
 ## Fluxo dos alertas (`loop_partidas`, a cada `INTERVALO_ALERTA_MIN`)
 1. Para cada servidor com canal de alertas, checa o Spectator-V5 de cada membro vinculado.

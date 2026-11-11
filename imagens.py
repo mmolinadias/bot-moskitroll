@@ -116,9 +116,17 @@ def desenhar_perfil(d: dict, imgs: dict) -> io.BytesIO:
     dr = ImageDraw.Draw(img)
     principal = d.get("solo") or d.get("flex")
     cor_tier = CORES_TIER.get(principal["tier"], NEUTRO) if principal else NEUTRO
+    if d.get("cor"):  # cor comprada na loja
+        cor_tier = ((d["cor"] >> 16) & 255, (d["cor"] >> 8) & 255, d["cor"] & 255)
 
     # ícone e nível
     colar(img, imgs.get("icone"), (40, 40), 132, raio=24, borda=cor_tier)
+    if d.get("coroa"):  # Coroa de Magnata da loja
+        pontas = [(80, 32), (84, 10), (95, 22), (106, 2), (117, 22), (128, 10), (132, 32)]
+        dr.polygon(pontas, fill=DOURADO, outline=(150, 110, 30))
+        dr.rectangle((80, 30, 132, 36), fill=DOURADO, outline=(150, 110, 30))
+        for x, y in ((84, 10), (106, 2), (128, 10)):
+            dr.ellipse((x - 4, y - 4, x + 4, y + 4), fill=(255, 236, 160))
     nivel = str(d["nivel"])
     fn = fonte(18, True)
     lw = fn.getlength(nivel) + 24
@@ -135,6 +143,9 @@ def desenhar_perfil(d: dict, imgs: dict) -> io.BytesIO:
         sub.append(f"Rota principal: {ROTAS_PT.get(d['rota'], d['rota'])}")
     sub.append(d.get("servidor", "BR").upper())
     dr.text((202, 112), "  •  ".join(sub), font=fonte(20), fill=CINZA)
+    if d.get("titulo"):  # título comprado na loja
+        f_titulo = fonte(24, True)
+        dr.text((202, 148), cortar_texto(f"“{d['titulo']}”", f_titulo, 740), font=f_titulo, fill=cor_tier)
 
     # ranqueadas
     for i, (titulo, e) in enumerate((("RANQUEADA SOLO/DUO", d.get("solo")), ("RANQUEADA FLEX", d.get("flex")))):
@@ -191,7 +202,9 @@ def desenhar_perfil(d: dict, imgs: dict) -> io.BytesIO:
 async def gerar_cartao_perfil(riot, d: dict) -> io.BytesIO:
     urls = {"icone": riot.url_icone_perfil(d["icone"])}
     maes = d.get("maestrias", [])
-    if maes:
+    if d.get("fundo"):  # fundo comprado na loja
+        urls["splash"] = riot.url_splash(d["fundo"])
+    elif maes:
         urls["splash"] = riot.url_splash(maes[0]["key"])
     for i, m in enumerate(maes[:3]):
         urls[f"camp{i}"] = riot.url_campeao(m["key"])

@@ -60,8 +60,39 @@ Para guardar uma cópia dos dados, use o botão **Backup** na página do bot na 
 | `/ranking [fila]` | Ranking Solo/Duo e Flex do servidor |
 | `/semana` | Resumo dos últimos 7 dias |
 | `/carteira [membro]` / `/diario` / `/top-moedas` | Moedas das apostas |
+| `/loja` / `/comprar item` | Itens à venda e compra |
+| `/bloquear-apelido` | Não deixa ninguém comprar apelido forçado para você |
+| `/config-loja` | Liga ou desliga os castigos da loja (admin) |
 | `/config-alertas #canal` / `/desativar-alertas` | Liga ou desliga os avisos (admin) |
 | `/ajuda` | Lista os comandos |
+
+## Loja
+| Item | Preço | O que faz |
+|---|---|---|
+| 🏷️ Título no perfil | 1.500 | Frase embaixo do seu nome no `/perfil` |
+| 🎨 Cor do cartão | 2.500 | Cor de destaque do seu `/perfil` |
+| 🖼️ Fundo com campeão | 3.000 | Campeão no fundo do seu `/perfil` |
+| 😎 Emoji no ranking | 1.000 | Emoji ao lado do seu nome no `/ranking` e no `/top-moedas` |
+| 🌈 Cargo colorido | 5.000 | Cargo com a cor que você escolher |
+| 👑 Coroa de Magnata | 20.000 | Coroa ao lado do seu nome em todo lugar |
+| 🛟 Seguro de aposta | 300 | Na próxima aposta, se perder, volta metade |
+| 🚀 Odd turbinada | 500 | Na próxima aposta, se ganhar, o prêmio é 1,5x |
+| 🎟️ Bilhete da rifa | 100 | Concorre ao pote, sorteado no domingo com o resumo da semana |
+| 🎲 Desafio Bravery | 800 | Sorteia um Ultimate Bravery para um amigo; se ele ganhar com o campeão em até 2 dias, leva 1.600 |
+| 📢 Anúncio | 500 | O bot posta sua mensagem em destaque no canal dos alertas |
+| 🤡 Apelido forçado | 2.000 | Muda o apelido de um amigo por 24h |
+| ⛓️ Castigo | 300 / 1.200 / 2.000 | Castigo do Discord por 1, 5 ou 10 minutos |
+| 🔇 Mutar microfone | 200 / 800 / 1.500 | Muta o amigo na call por 1, 5 ou 10 minutos |
+| 🙉 Ensurdecer | 200 / 800 / 1.500 | O amigo para de ouvir a call por 1, 5 ou 10 minutos |
+| 🦶 Chutar da call | 400 | Desconecta o amigo da call |
+| 🛡️ Escudo | 1.500 | Bloqueia o próximo castigo, mute, ensurdecer, chute ou apelido contra você |
+
+- Quem leva um castigo fica **protegido por 10 minutos** depois que ele acaba. Não vale castigar você mesmo nem bots.
+- Quem não quer apelido forçado usa `/bloquear-apelido`. Um admin pode desligar todos os castigos com `/config-loja castigos:False`.
+- O Discord não deixa o bot castigar o dono do servidor, admins ou quem tem cargo acima do bot. Se a ação falhar, a compra não é cobrada.
+
+Para a loja funcionar, o cargo do bot precisa destas permissões, e precisa estar **acima** dos cargos das pessoas que vão ser castigadas:
+**Gerenciar Cargos** (cargo colorido), **Gerenciar Apelidos** (apelido forçado), **Castigar Membros** (castigo), **Silenciar Membros** (mutar), **Ensurdecer Membros** (ensurdecer) e **Mover Membros** (chutar da call).
 
 ## Como funcionam algumas coisas
 - **Builds (`/build`):** o bot junta sozinho partidas de jogadores Mestre+ do KR, EUW e BR e soma runas, feitiços, itens e ordem das habilidades. Logo que liga pela primeira vez, leva algumas horas até ter partidas suficientes. Gasta cerca de 0,7 GB de internet por dia (dá para diminuir com `COLETA_PARTIDAS_HORA` no `.env`) e respeita o limite da chave da Riot. Na Discloud grátis, desligue com `COLETA_BUILDS=nao`.

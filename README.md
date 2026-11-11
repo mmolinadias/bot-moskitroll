@@ -4,7 +4,7 @@
 
 **Bot de Discord para acompanhar o League of Legends da sua turma no servidor BR.**
 
-Elo, histórico, raio-X da partida ao vivo, resumo pós-jogo com nota de 0 a 10, apostas com moedas fictícias, ranking, resumo da semana e builds do alto elo, tudo direto no Discord.
+Elo, histórico, raio-X da partida ao vivo, resumo pós-jogo com nota de 0 a 10, apostas com moedas fictícias, uma loja para gastar essas moedas, ranking, resumo da semana e builds do alto elo, tudo direto no Discord.
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![discord.py](https://img.shields.io/badge/discord.py-2.4%2B-5865F2?logo=discord&logoColor=white)
@@ -23,6 +23,7 @@ Elo, histórico, raio-X da partida ao vivo, resumo pós-jogo com nota de 0 a 10,
 | 🔴 **Alertas de partida** | Quando alguém do grupo entra em partida, o bot avisa no canal com o raio-X dos 10 jogadores (elo, winrate e maestria) e diz qual time é favorito. |
 | 📊 **Resumo pós-jogo** | KDA, dano, participação, CS, visão, **nota de 0 a 10**, **MVP/ACE**, PDL ganho ou perdido, subida de elo e pentakill. |
 | 💰 **Apostas fictícias** | Aposte no time azul ou vermelho com moedas que não valem nada de verdade. As odds dependem do elo dos times. |
+| 🛒 **Loja** | Gaste as moedas com título e fundo no perfil, coroa, cargo colorido, seguro de aposta, rifa... ou castigando, mutando e chutando os amigos da call. |
 | 🏆 **Ranking e semana** | Ranking de Solo/Duo e Flex do servidor e, todo domingo, o resumo da semana: MVP, quem mais subiu, quem mais morreu, pé frio... |
 | 🛠️ **Builds Mestre+** | `/build` mostra runas, feitiços, itens e ordem das habilidades mais usados por jogadores **Mestre+ do KR, EUW e BR**. |
 | 🎲 **Ultimate Bravery** | Sorteia campeão, 6 itens e 2 feitiços, no Summoner's Rift ou no ARAM. |
@@ -42,10 +43,39 @@ Elo, histórico, raio-X da partida ao vivo, resumo pós-jogo com nota de 0 a 10,
 | `/ranking [fila]` | Ranking Solo/Duo e Flex do servidor |
 | `/semana` | Resumo dos últimos 7 dias |
 | `/carteira` · `/diario` · `/top-moedas` | Moedas das apostas |
+| `/loja` · `/comprar item` | Itens à venda e compra |
+| `/bloquear-apelido` | Não deixa ninguém comprar apelido forçado para você |
+| `/config-loja` | Liga ou desliga os castigos (admin) |
 | `/config-alertas #canal` · `/desativar-alertas` | Liga ou desliga os avisos (admin) |
 | `/ajuda` | Lista os comandos |
 
 > Sem o `Nome#TAG`, os comandos usam a conta que você vinculou com `/vincular`.
+
+## 🛒 Loja
+
+| Item | Preço | O que faz |
+|---|---|---|
+| 🏷️ Título no perfil | 1.500 | Frase embaixo do seu nome no `/perfil` |
+| 🎨 Cor do cartão | 2.500 | Cor de destaque do seu `/perfil` |
+| 🖼️ Fundo com campeão | 3.000 | Campeão no fundo do seu `/perfil` |
+| 😎 Emoji no ranking | 1.000 | Emoji ao lado do seu nome no `/ranking` e no `/top-moedas` |
+| 🌈 Cargo colorido | 5.000 | Cargo com a cor que você escolher |
+| 👑 Coroa de Magnata | 20.000 | Coroa ao lado do seu nome em todo lugar |
+| 🛟 Seguro de aposta | 300 | Na próxima aposta, se perder, volta metade |
+| 🚀 Odd turbinada | 500 | Na próxima aposta, se ganhar, o prêmio é 1,5x |
+| 🎟️ Bilhete da rifa | 100 | Concorre ao pote, sorteado no domingo com o resumo da semana |
+| 🎲 Desafio Bravery | 800 | Sorteia um Ultimate Bravery para um amigo; se ele ganhar com o campeão em até 2 dias, leva 1.600 |
+| 📢 Anúncio | 500 | O bot posta sua mensagem em destaque no canal dos alertas |
+| 🤡 Apelido forçado | 2.000 | Muda o apelido de um amigo por 24h |
+| ⛓️ Castigo | 300 / 1.200 / 2.000 | Castigo do Discord por 1, 5 ou 10 minutos |
+| 🔇 Mutar microfone | 200 / 800 / 1.500 | Muta o amigo na call por 1, 5 ou 10 minutos |
+| 🙉 Ensurdecer | 200 / 800 / 1.500 | O amigo para de ouvir a call por 1, 5 ou 10 minutos |
+| 🦶 Chutar da call | 400 | Desconecta o amigo da call |
+| 🛡️ Escudo | 1.500 | Bloqueia o próximo castigo, mute, ensurdecer, chute ou apelido contra você |
+
+- Quem leva um castigo fica **protegido por 10 minutos** depois que ele acaba. Não vale castigar você mesmo nem bots.
+- Quem não quer apelido forçado usa `/bloquear-apelido`. Um admin pode desligar todos os castigos com `/config-loja castigos:False`.
+- O Discord não deixa o bot castigar o dono do servidor, admins ou quem tem cargo acima do bot. Se a ação falhar, a compra não é cobrada.
 
 ## ⚙️ Como funciona por dentro
 
@@ -85,6 +115,10 @@ flowchart LR
 
 No Discord Developer Portal, em **OAuth2 → URL Generator**, marque `bot` e `applications.commands`, com as permissões **View Channels**, **Send Messages**, **Embed Links** e **Attach Files**.
 
+Para a loja funcionar, o cargo do bot precisa destas permissões, e precisa estar **acima** dos cargos das pessoas que vão ser castigadas:
+**Gerenciar Cargos** (cargo colorido), **Gerenciar Apelidos** (apelido forçado), **Castigar Membros** (castigo), **Silenciar Membros** (mutar), **Ensurdecer Membros** (ensurdecer) e **Mover Membros** (chutar da call).
+
+
 O passo a passo completo, com dicas para quem está começando, está no [LEIA-ME.md](LEIA-ME.md).
 
 ## 🔧 Configuração (`.env`)
@@ -117,6 +151,7 @@ bot.py          comandos, botões das apostas e loops dos alertas
 riot.py         API da Riot (com controle de limite) e Data Dragon
 coleta.py       coleta das builds Mestre+ para o /build
 analise.py      elo, nota de 0 a 10, MVP/ACE e odds
+loja.py         catálogo e regras da loja
 imagens.py      cartão do /perfil (Pillow)
 dados.py        dados.json: vínculos, moedas, apostas e histórico
 config.py       leitura do .env

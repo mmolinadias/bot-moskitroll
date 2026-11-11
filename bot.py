@@ -20,6 +20,9 @@ from analise import (FILA_PARA_TIPO, FILAS_RANK, TIMES_PT, calcular_notas, calcu
                      texto_pontuacao, texto_variacao, tier_curto, winrate)
 from dados import Dados
 from imagens import gerar_cartao_perfil
+from loja import (APELIDO_HORAS, CASTIGOS, CATEGORIAS, CONTAVEIS, DESAFIO_HORAS, ITENS, PREMIO_DESAFIO,
+                  DadosLoja, ErroLoja, emoji_valido, limpar_texto, preco, texto_preco)
+from loja import CORES as CORES_LOJA
 from coleta import NOMES_FILAS, ROTAS, Coleta
 from riot import NaoEncontrado, RiotAPI, RiotErro
 
@@ -28,6 +31,7 @@ log = logging.getLogger("bot-lol")
 
 riot = RiotAPI()
 store = Dados(config.PASTA / "dados.json")
+loja = DadosLoja(store)
 coleta = Coleta(riot, config.PASTA / "builds.json")
 
 CORES = {"ok": 0x2ECC71, "info": 0x3498DB, "aviso": 0xE67E22, "erro": 0xE74C3C, "ouro": 0xF1C40F}
@@ -60,6 +64,7 @@ class BotLoL(discord.Client):
             log.info("Comandos sincronizados globalmente (podem levar até 1h para aparecer)")
         loop_partidas.start()
         loop_semanal.start()
+        loop_loja.start()
         if config.COLETA_BUILDS:
             coleta.iniciar()
 
@@ -274,6 +279,12 @@ async def cmd_perfil(interaction: discord.Interaction, jogador: str | None = Non
                        "nivel": m["championLevel"], "pontos": m["championPoints"]} for m in maes],
         "recentes": recentes, "rota": rotas.most_common(1)[0][0] if rotas else None,
     }
+    if interaction.guild:  # itens da loja de quem é dono dessa conta
+        vinculos = store.de("vinculos", interaction.guild.id)
+        dono = next((u for u, v in vinculos.items() if v["puuid"] == puuid), None)
+        if dono:
+            itens = loja.servidor(interaction.guild.id)["usuarios"].get(dono, {})
+            dados_cartao.update({k: itens[k] for k in ("titulo", "cor", "fundo", "coroa") if itens.get(k)})
     arquivo = await gerar_cartao_perfil(riot, dados_cartao)
     await interaction.followup.send(file=discord.File(arquivo, filename="perfil.png"))
 
@@ -421,7 +432,7 @@ async def cmd_ranking(interaction: discord.Interaction, fila: app_commands.Choic
         linhas = []
         for i, (uid, rid, e) in enumerate(lista[:20]):
             pos = medalhas[i] if i < 3 else f"`{i + 1}.`"
-            linhas.append(f"{pos} <@{uid}> · {escape_markdown(rid)}\n　**{texto_elo(e)}** · "
+            linhas.append(f"{pos} {loja.enfeite(interaction.guild.id, uid)}<@{uid}> · {escape_markdown(rid)}\n　**{texto_elo(e)}** · "
                           f"{winrate(e)}% WR ({plural(e['wins'] + e['losses'], 'jogo')})")
         if not linhas:
             linhas.append("Ninguém tem classificação nessa fila ainda.")
@@ -472,12 +483,16 @@ class ModalAposta(discord.ui.Modal):
             return
         odd = partida["odds"][str(self.time_id)]
         carteira["saldo"] -= valor
-        partida["apostas"][str(interaction.user.id)] = {"time": self.time_id, "valor": valor, "odd": odd}
+        aposta = {"time": self.time_id, "valor": valor, "odd": odd}
+        usados = loja.aplicar_na_aposta(self.g, interaction.user.id, aposta)
+        partida["apostas"][str(interaction.user.id)] = aposta
         store.salvar()
         emoji = "🔵" if self.time_id == 100 else "🔴"
+        premio = int(valor * odd * (1.5 if aposta.get("turbo") else 1))
+        extra = f" · usando {' e '.join(usados)}" if usados else ""
         await interaction.response.send_message(
             f"💰 {interaction.user.mention} apostou **{numero(valor)}** moedas no {emoji} **{TIMES_PT[self.time_id]}** "
-            f"(paga {odd:.2f}x → {numero(int(valor * odd))})", allowed_mentions=SEM_MENCAO)
+            f"(paga {odd:.2f}x → {numero(premio)}){extra}", allowed_mentions=SEM_MENCAO)
 
 
 class BotaoAposta(discord.ui.DynamicItem[discord.ui.Button],
@@ -512,8 +527,12 @@ async def cmd_carteira(interaction: discord.Interaction, membro: discord.Member 
     texto = f"💰 **{numero(c['saldo'])}** moedas"
     if abertas:
         texto += f"\n🎲 {abertas} aposta(s) em andamento"
+    inventario = loja.inventario(interaction.guild.id, alvo.id)
+    if inventario:
+        texto += "\n\n**🎒 Itens da loja**\n" + "\n".join(inventario)
     await interaction.response.send_message(embed=discord.Embed(
-        title=f"Carteira de {alvo.display_name}", description=texto, color=CORES["ouro"]))
+        title=f"Carteira de {loja.enfeite(interaction.guild.id, alvo.id)}{alvo.display_name}",
+        description=texto, color=CORES["ouro"]))
 
 
 @bot.tree.command(name="diario", description="Pega suas moedas grátis do dia")
@@ -541,7 +560,8 @@ async def cmd_top_moedas(interaction: discord.Interaction):
         return
     top = sorted(carteiras.items(), key=lambda kv: -kv[1]["saldo"])[:10]
     medalhas = ["🥇", "🥈", "🥉"]
-    linhas = [f"{medalhas[i] if i < 3 else f'`{i + 1}.`'} <@{u}> — **{numero(c['saldo'])}** moedas"
+    linhas = [f"{medalhas[i] if i < 3 else f'`{i + 1}.`'} {loja.enfeite(interaction.guild.id, u)}<@{u}> — "
+              f"**{numero(c['saldo'])}** moedas"
               for i, (u, c) in enumerate(top)]
     await interaction.response.send_message(embed=discord.Embed(
         title="💰 Mais ricos do servidor", description="\n".join(linhas), color=CORES["ouro"]),
@@ -630,11 +650,17 @@ def liquidar_apostas(g: str, partida: dict, vencedor: int | None, remake: bool) 
         c = store.carteira(g, u)
         if remake or vencedor is None:
             c["saldo"] += a["valor"]
+            loja.devolver_itens(g, u, a)
             linhas.append(f"↩️ <@{u}> recebeu de volta {numero(a['valor'])}")
         elif a["time"] == vencedor:
-            premio = int(a["valor"] * a["odd"])
+            premio = int(a["valor"] * a["odd"] * (1.5 if a.get("turbo") else 1))
             c["saldo"] += premio
-            linhas.append(f"🤑 <@{u}> ganhou **{numero(premio)}** (+{numero(premio - a['valor'])})")
+            linhas.append(f"🤑 <@{u}> ganhou **{numero(premio)}** (+{numero(premio - a['valor'])})"
+                          + (" 🚀" if a.get("turbo") else ""))
+        elif a.get("seguro"):
+            volta = a["valor"] // 2
+            c["saldo"] += volta
+            linhas.append(f"🛟 <@{u}> perdeu {numero(a['valor'])}, mas o seguro devolveu {numero(volta)}")
         else:
             linhas.append(f"💸 <@{u}> perdeu {numero(a['valor'])}")
     return linhas
@@ -677,7 +703,7 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
         dano = eu.get("totalDamageDealtToChampions", 0)
         pct_dano = round(dano / max(dano_time[eu["teamId"]], 1) * 100)
         kp = round((k + a) / max(abates_time[eu["teamId"]], 1) * 100)
-        linhas = [f"<@{u}> de **{champ}** — **{k}/{d}/{a}** (KDA {kda(k, d, a):.1f})",
+        linhas = [f"{loja.enfeite(g, u)}<@{u}> de **{champ}** — **{k}/{d}/{a}** (KDA {kda(k, d, a):.1f})",
                   f"💥 {numero(dano)} de dano ({pct_dano}% do time) · 🗡️ {kp}% de participação",
                   f"🌾 {cs} CS ({cs / minutos:.1f}/min) · 👁️ visão {eu.get('visionScore', 0)} · 💰 {numero(eu.get('goldEarned', 0))}",
                   f"⭐ Nota **{nota.get('nota', '-')}**/10{selo}"]
@@ -699,6 +725,10 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
             if bonus:
                 store.carteira(g, u)["saldo"] += bonus
                 linhas.append(f"🪙 +{bonus} moedas")
+        desafio = loja.checar_desafio(g, u, eu.get("championId", 0), bool(eu.get("win")), remake)
+        if desafio:
+            store.carteira(g, u)["saldo"] += desafio[1]
+            linhas.append(desafio[0])
         embed.add_field(name=f"{res} · {j['riot_id']}", value="\n".join(linhas)[:1024], inline=False)
         store.historico(g).append({
             "user": u, "ts": time.time(), "campeao": champ, "vitoria": bool(eu.get("win")),
@@ -898,6 +928,7 @@ async def loop_semanal():
         if canal is None:
             continue
         store.d["resumo_semanal"][g] = semana
+        await sortear_rifa(g, canal)
         embed, mvp = montar_semana(g)
         if not embed:
             continue
@@ -992,26 +1023,367 @@ MAPAS_BRAVERY = {"11": "Summoner's Rift", "12": "Howling Abyss (ARAM)"}
 @app_commands.choices(mapa=[app_commands.Choice(name=nome, value=m) for m, nome in MAPAS_BRAVERY.items()])
 async def cmd_ultimate_bravery(interaction: discord.Interaction, mapa: app_commands.Choice[str] | None = None):
     await interaction.response.defer()
+    mapa_id = mapa.value if mapa else "11"
+    champ, build, sem_botas, feiticos = await sortear_bravery(mapa_id)
+    embed = embed_bravery(mapa_id, f"{interaction.user.mention}, você vai jogar de **{riot.nome_campeao(champ)}**!",
+                          champ, build, sem_botas, feiticos)
+    await interaction.followup.send(embed=embed, allowed_mentions=SEM_MENCAO)
+
+
+async def sortear_bravery(mapa_id: str):
     if not riot.campeoes:
         raise RiotErro("Ainda não carreguei a lista de campeões. Tente de novo daqui a pouco.")
-    mapa_id = mapa.value if mapa else "11"
     d = await riot.dados_bravery(mapa_id)
-
     champ = random.choice(list(riot.campeoes))
     sem_botas = riot.campeoes[champ]["id"] == "Cassiopeia"  # ela não pode comprar botas
     build = ([] if sem_botas else [random.choice(d["botas"])]) + random.sample(d["lendarios"], 6 if sem_botas else 5)
     feiticos = random.sample(d["feiticos"], 2)
+    return champ, build, sem_botas, feiticos
 
+
+def embed_bravery(mapa_id: str, descricao: str, champ: int, build, sem_botas: bool, feiticos) -> discord.Embed:
     linhas = [f"`{i}.` {'👢 ' if i == 1 and not sem_botas else ''}**{nome}**"
               for i, (_, nome) in enumerate(build, start=1)]
     embed = discord.Embed(title=f"🎲 Ultimate Bravery — {MAPAS_BRAVERY[mapa_id]}", color=CORES["ouro"],
-                          description=f"{interaction.user.mention}, você vai jogar de **{riot.nome_campeao(champ)}**!")
+                          description=descricao)
     embed.add_field(name="✨ Feitiços", value=" + ".join(f"**{nome}**" for _, nome in feiticos), inline=False)
     embed.add_field(name="🛒 Build", value="\n".join(linhas), inline=False)
     if riot.url_campeao(champ):
         embed.set_thumbnail(url=riot.url_campeao(champ))
     embed.set_footer(text="Sem trocar nada. Boa sorte! 😅")
-    await interaction.followup.send(embed=embed, allowed_mentions=SEM_MENCAO)
+    return embed
+
+
+# ================================================================ loja
+@bot.tree.command(name="loja", description="Itens que dá para comprar com as moedas")
+@app_commands.guild_only()
+async def cmd_loja(interaction: discord.Interaction):
+    g = interaction.guild.id
+    embed = discord.Embed(title="🛒 Loja do bot", color=CORES["ouro"],
+                          description="Compre com `/comprar`. As moedas são fictícias e não valem nada de verdade.")
+    castigos_ligados = loja.servidor(g)["config"]["castigos"]
+    for cat, titulo in CATEGORIAS.items():
+        linhas = [f"{it['emoji']} **{it['nome']}** — {texto_preco(i)}\n　{it['desc']}"
+                  for i, it in ITENS.items() if it["cat"] == cat]
+        if cat == "castigos" and not castigos_ligados:
+            titulo += " (desligados neste servidor)"
+        embed.add_field(name=titulo, value="\n".join(linhas)[:1024], inline=False)
+    saldo = store.carteira(g, interaction.user.id)["saldo"]
+    store.salvar()
+    embed.set_footer(text=f"Seu saldo: {numero(saldo)} moedas")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+def _checar_permissao(guild: discord.Guild, **perms):
+    faltando = [nome for nome, _ in perms.items() if not getattr(guild.me.guild_permissions, nome)]
+    if faltando:
+        nomes = {"manage_roles": "Gerenciar Cargos", "manage_nicknames": "Gerenciar Apelidos",
+                 "moderate_members": "Castigar Membros", "mute_members": "Silenciar Membros",
+                 "deafen_members": "Ensurdecer Membros", "move_members": "Mover Membros"}
+        raise ErroLoja("O bot não tem a permissão **" + ", ".join(nomes.get(f, f) for f in faltando)
+                       + "** neste servidor. Peça para um admin liberar.")
+
+
+def _na_call(guild: discord.Guild, membro: discord.Member) -> discord.Member:
+    m = guild.get_member(membro.id)
+    if not m or not m.voice or not m.voice.channel:
+        raise ErroLoja(f"{membro.mention} não está em nenhuma call agora.")
+    return m
+
+
+async def _executar_compra(interaction: discord.Interaction, i: str, alvo: discord.Member | None,
+                           texto: str | None, campeao: str | None, cor: str | None, minutos: int,
+                           quantidade: int, custo: int) -> str:
+    """Faz o efeito do item. Se der erro (ErroLoja), nada é cobrado."""
+    guild, eu = interaction.guild, interaction.user
+    g = str(guild.id)
+    dados = loja.usuario(g, eu.id)
+
+    if i == "titulo":
+        dados["titulo"] = limpar_texto(texto, 40)
+        return f"Seu `/perfil` agora mostra “{dados['titulo']}”."
+    if i in ("cor", "cargo") and not cor:
+        raise ErroLoja("Esse item precisa do campo `cor`.")
+    if i == "cor":
+        dados["cor"] = CORES_LOJA[cor][1]
+        return f"Seu `/perfil` agora é {CORES_LOJA[cor][0].lower()}."
+    if i == "fundo":
+        champ = riot.buscar_campeao(campeao or "")
+        if champ is None:
+            raise ErroLoja("Escolha um campeão no campo `campeao`.")
+        dados["fundo"] = champ
+        return f"Seu `/perfil` agora tem o fundo de **{riot.nome_campeao(champ)}**."
+    if i == "emoji":
+        t = (texto or "").strip()
+        if not emoji_valido(t):
+            raise ErroLoja("Coloque só um emoji no campo `texto` (ex.: 🐸).")
+        dados["emoji"] = t
+        return f"Agora você aparece com {t} no ranking."
+    if i == "coroa":
+        if dados.get("coroa"):
+            raise ErroLoja("Você já tem a Coroa de Magnata. 👑")
+        dados["coroa"] = True
+        return "👑 Agora todo mundo sabe que você é rico."
+    if i == "cargo":
+        _checar_permissao(guild, manage_roles=True)
+        nome_cor, valor_cor = CORES_LOJA[cor]
+        try:
+            cargo = guild.get_role(int(dados.get("cargo", 0)))
+            if cargo:
+                await cargo.edit(colour=discord.Colour(valor_cor), reason="Loja do bot")
+            else:
+                cargo = await guild.create_role(name=f"🎨 {eu.display_name}"[:100], colour=discord.Colour(valor_cor),
+                                                reason=f"Loja do bot: comprado por {eu}")
+                try:  # sobe o cargo até logo abaixo do bot, para a cor aparecer
+                    await cargo.edit(position=max(1, guild.me.top_role.position - 1))
+                except discord.HTTPException:
+                    pass
+            await eu.add_roles(cargo, reason="Loja do bot")
+        except discord.Forbidden:
+            raise ErroLoja("O bot não conseguiu criar ou dar o cargo. O cargo do bot precisa estar acima dos outros.")
+        dados["cargo"] = cargo.id
+        return f"Você ganhou o cargo {cargo.mention} ({nome_cor.lower()})."
+    if i in ("seguro", "turbo", "escudo"):
+        dados[i] = dados.get(i, 0) + quantidade
+        return f"Você tem agora **{dados[i]}** {ITENS[i]['nome'].lower()}(s)."
+    if i == "rifa":
+        rifa = loja.servidor(g)["rifa"]
+        rifa["pote"] += custo
+        rifa["bilhetes"][str(eu.id)] = rifa["bilhetes"].get(str(eu.id), 0) + quantidade
+        return (f"Você tem **{rifa['bilhetes'][str(eu.id)]}** bilhete(s). O pote está em "
+                f"**{numero(rifa['pote'])}** moedas e sai no domingo, junto com o resumo da semana.")
+    if i == "anuncio":
+        mensagem = limpar_texto(texto, 300)
+        canal_id = store.d["alertas"].get(g)
+        canal = bot.get_channel(int(canal_id)) if canal_id else interaction.channel
+        embed = discord.Embed(title="📢 Anúncio", description=mensagem, color=CORES["ouro"])
+        embed.set_author(name=eu.display_name, icon_url=eu.display_avatar.url)
+        try:
+            await (canal or interaction.channel).send(embed=embed, allowed_mentions=SEM_MENCAO)
+        except discord.HTTPException:
+            raise ErroLoja("Não consegui postar o anúncio no canal.")
+        return "Seu anúncio foi postado."
+
+    # itens com alvo
+    if i == "desafio":
+        if str(alvo.id) not in store.de("vinculos", g):
+            raise ErroLoja(f"{alvo.mention} precisa ter usado `/vincular` para o bot ver as partidas dele.")
+        if not store.d["alertas"].get(g):
+            raise ErroLoja("Os alertas precisam estar ligados (`/config-alertas`) para o bot ver o resultado.")
+        atual = loja.servidor(g)["desafios"].get(str(alvo.id))
+        if atual and atual["ate"] > time.time():
+            raise ErroLoja(f"{alvo.mention} já tem um Desafio Bravery valendo.")
+        await interaction.response.defer()
+        champ, build, sem_botas, feiticos = await sortear_bravery("11")
+        ate = time.time() + DESAFIO_HORAS * 3600
+        loja.servidor(g)["desafios"][str(alvo.id)] = {"de": str(eu.id), "campeao": champ, "ate": ate}
+        embed = embed_bravery("11", f"{alvo.mention}, {eu.mention} te desafiou! Jogue de "
+                                    f"**{riot.nome_campeao(champ)}** e vença até <t:{int(ate)}:f> para ganhar "
+                                    f"**{numero(PREMIO_DESAFIO)}** moedas.", champ, build, sem_botas, feiticos)
+        await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=[alvo]))
+        return f"Desafio enviado para {alvo.mention}."
+
+    # castigos e apelido: o escudo do alvo bloqueia (e a compra é cobrada mesmo assim)
+    if loja.usar_escudo(g, alvo.id):
+        return f"🛡️ {alvo.mention} tinha um **Escudo** e bloqueou! Suas moedas foram embora."
+    motivo = f"Loja do bot: comprado por {eu}"
+    try:
+        if i == "apelido":
+            alvo_dados = loja.usuario(g, alvo.id)
+            if alvo_dados.get("sem_apelido"):
+                raise ErroLoja(f"{alvo.mention} desligou o apelido forçado (`/bloquear-apelido`).")
+            if any(p["tipo"] == "apelido" and p["user"] == str(alvo.id) for p in loja.servidor(g)["pendentes"]):
+                raise ErroLoja(f"{alvo.mention} já está com um apelido forçado.")
+            novo = limpar_texto(texto, 32)
+            _checar_permissao(guild, manage_nicknames=True)
+            antigo = alvo.nick
+            await alvo.edit(nick=novo, reason=motivo)
+            loja.agendar(g, "apelido", alvo.id, APELIDO_HORAS * 3600, antigo=antigo)
+            return f"{alvo.mention} agora se chama **{escape_markdown(novo)}** por {APELIDO_HORAS}h. 🤡"
+        if i == "castigo":
+            _checar_permissao(guild, moderate_members=True)
+            await alvo.timeout(timedelta(minutes=minutos), reason=motivo)
+            loja.marcar_imune(g, alvo.id, minutos)
+            return f"⛓️ {alvo.mention} está de castigo por {plural(minutos, 'minuto')}."
+        if i in ("mutar", "surdo"):
+            membro = _na_call(guild, alvo)
+            if i == "mutar":
+                _checar_permissao(guild, mute_members=True)
+                await membro.edit(mute=True, reason=motivo)
+            else:
+                _checar_permissao(guild, deafen_members=True)
+                await membro.edit(deafen=True, reason=motivo)
+            loja.agendar(g, i, alvo.id, minutos * 60)
+            loja.marcar_imune(g, alvo.id, minutos)
+            acao = "mutado" if i == "mutar" else "surdo"
+            return f"{ITENS[i]['emoji']} {alvo.mention} está {acao} por {plural(minutos, 'minuto')}."
+        if i == "chutar":
+            membro = _na_call(guild, alvo)
+            _checar_permissao(guild, move_members=True)
+            await membro.move_to(None, reason=motivo)
+            loja.marcar_imune(g, alvo.id, 0)
+            return f"🦶 {alvo.mention} foi chutado da call."
+    except discord.Forbidden:
+        raise ErroLoja(f"O Discord não deixou o bot fazer isso com {alvo.mention} "
+                       "(ele é dono, admin ou tem cargo acima do bot).")
+    except discord.HTTPException as e:
+        raise ErroLoja(f"O Discord recusou ({e.status}). Tente de novo.")
+    raise ErroLoja("Item desconhecido.")
+
+
+@bot.tree.command(name="comprar", description="Compra um item da loja com suas moedas")
+@app_commands.guild_only()
+@app_commands.describe(item="O que comprar (veja os detalhes em /loja)",
+                       alvo="O amigo (desafio, apelido e castigos)",
+                       texto="Texto do título, emoji, anúncio ou apelido",
+                       campeao="Campeão do fundo do perfil", cor="Cor do cartão ou do cargo",
+                       minutos="Duração do castigo, mute ou ensurdecer (padrão: 1)",
+                       quantidade="Quantos (seguro, odd turbinada, escudo e rifa)")
+@app_commands.autocomplete(campeao=autocompletar_campeao)
+@app_commands.choices(
+    item=[app_commands.Choice(name=f"{it['emoji']} {it['nome']} — {texto_preco(i)}"[:100], value=i)
+          for i, it in ITENS.items()],
+    cor=[app_commands.Choice(name=nome, value=c) for c, (nome, _) in CORES_LOJA.items()],
+    minutos=[app_commands.Choice(name=plural(m, "minuto"), value=m) for m in (1, 5, 10)])
+async def cmd_comprar(interaction: discord.Interaction, item: app_commands.Choice[str],
+                      alvo: discord.Member | None = None, texto: str | None = None, campeao: str | None = None,
+                      cor: app_commands.Choice[str] | None = None, minutos: app_commands.Choice[int] | None = None,
+                      quantidade: app_commands.Range[int, 1, 50] = 1):
+    g, i = str(interaction.guild.id), item.value
+    mins = minutos.value if minutos else 1
+    qtd = quantidade if i in CONTAVEIS else 1
+    custo = preco(i, mins, qtd)
+    carteira = store.carteira(g, interaction.user.id)
+    if carteira["saldo"] < custo:
+        raise ErroLoja(f"Isso custa **{numero(custo)}** moedas e você tem **{numero(carteira['saldo'])}**. "
+                       "Use `/diario` e aposte para ganhar mais.")
+    if i in CASTIGOS or i in ("desafio", "apelido"):
+        if alvo is None:
+            raise ErroLoja("Esse item precisa do campo `alvo` (o amigo).")
+        if alvo.bot or alvo.id == interaction.user.id:
+            raise ErroLoja("Escolha um amigo (não vale você mesmo nem bots).")
+    if i in CASTIGOS:
+        if not loja.servidor(g)["config"]["castigos"]:
+            raise ErroLoja("Os castigos estão desligados neste servidor (um admin pode ligar com `/config-loja`).")
+        loja.checar_alvo(g, alvo.id)
+
+    resultado = await _executar_compra(interaction, i, alvo, texto, campeao, cor.value if cor else None,
+                                       mins, qtd, custo)
+    carteira["saldo"] -= custo
+    store.salvar()
+    it = ITENS[i]
+    nome = it["nome"] + (f" x{qtd}" if qtd > 1 else "") + (f" ({plural(mins, 'minuto')})" if "precos" in it else "")
+    embed = discord.Embed(title=f"🛒 {it['emoji']} {nome}", color=CORES["ok"],
+                          description=f"{resultado}\n-{numero(custo)} moedas · saldo: **{numero(carteira['saldo'])}**")
+    await responder(interaction, embed=embed, allowed_mentions=SEM_MENCAO)
+
+
+@bot.tree.command(name="bloquear-apelido", description="Liga ou desliga o Apelido forçado da loja para você")
+@app_commands.guild_only()
+async def cmd_bloquear_apelido(interaction: discord.Interaction):
+    dados = loja.usuario(interaction.guild.id, interaction.user.id)
+    dados["sem_apelido"] = not dados.get("sem_apelido")
+    store.salvar()
+    await interaction.response.send_message(
+        "🔒 Ninguém mais pode comprar Apelido forçado para você." if dados["sem_apelido"]
+        else "🔓 Agora os amigos podem comprar Apelido forçado para você.", ephemeral=True)
+
+
+@bot.tree.command(name="config-loja", description="Liga ou desliga os castigos da loja (admin)")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.describe(castigos="Permitir castigo, mutar, ensurdecer e chutar da call")
+async def cmd_config_loja(interaction: discord.Interaction, castigos: bool):
+    loja.servidor(interaction.guild.id)["config"]["castigos"] = castigos
+    store.salvar()
+    await interaction.response.send_message(
+        "✅ Castigos ligados." if castigos else "✅ Castigos desligados.", ephemeral=True)
+
+
+async def sortear_rifa(g: str, canal):
+    resultado = loja.sortear_rifa(g)
+    if not resultado:
+        return
+    vencedor, pote, total = resultado
+    store.carteira(g, vencedor)["saldo"] += pote
+    store.salvar()
+    try:
+        await canal.send(embed=discord.Embed(
+            title="🎟️ Rifa da semana", color=CORES["ouro"],
+            description=f"{loja.enfeite(g, vencedor)}<@{vencedor}> ganhou o pote de **{numero(pote)}** moedas! "
+                        f"({plural(total, 'bilhete')} vendidos)"), allowed_mentions=SEM_MENCAO)
+    except discord.HTTPException as e:
+        log.warning("Não consegui postar a rifa: %s", e)
+
+
+async def desfazer_castigo(guild: discord.Guild, p: dict) -> bool:
+    """Desmuta, tira o ensurdecer ou devolve o apelido. False = tentar de novo depois."""
+    membro = guild.get_member(int(p["user"]))
+    if membro is None:
+        try:
+            membro = await guild.fetch_member(int(p["user"]))
+        except discord.NotFound:
+            return True
+        except discord.HTTPException:
+            return False
+    try:
+        if p["tipo"] in ("mutar", "surdo"):
+            if not membro.voice:
+                return False  # só dá para desmutar quem está numa call; tenta quando ele entrar
+            if p["tipo"] == "mutar":
+                await membro.edit(mute=False, reason="Fim do castigo da loja")
+            else:
+                await membro.edit(deafen=False, reason="Fim do castigo da loja")
+        elif p["tipo"] == "apelido":
+            await membro.edit(nick=p.get("antigo"), reason="Fim do apelido forçado da loja")
+    except discord.Forbidden:
+        return True
+    except discord.HTTPException:
+        return False
+    return True
+
+
+@tasks.loop(seconds=20)
+async def loop_loja():
+    agora = time.time()
+    mudou = False
+    for g, s in list(store.d["loja"].items()):
+        pendentes = s.get("pendentes") or []
+        guild = bot.get_guild(int(g))
+        if not pendentes or guild is None:
+            continue
+        restantes = []
+        for p in pendentes:
+            if p["ate"] > agora:
+                restantes.append(p)
+            elif not await desfazer_castigo(guild, p) and agora - p["ate"] < 30 * 86400:
+                restantes.append(p)
+        if len(restantes) != len(pendentes):
+            s["pendentes"] = restantes
+            mudou = True
+    if mudou:
+        store.salvar()
+
+
+@loop_loja.before_loop
+async def _antes_loja():
+    await bot.wait_until_ready()
+
+
+@bot.event
+async def on_voice_state_update(membro: discord.Member, antes: discord.VoiceState, depois: discord.VoiceState):
+    if depois.channel is None or antes.channel is not None:
+        return
+    s = store.d["loja"].get(str(membro.guild.id))
+    if not s or not s.get("pendentes"):
+        return
+    agora = time.time()
+    for p in list(s["pendentes"]):
+        if p["user"] == str(membro.id) and p["tipo"] in ("mutar", "surdo") and p["ate"] <= agora:
+            if await desfazer_castigo(membro.guild, p):
+                s["pendentes"].remove(p)
+                store.salvar()
 
 
 # ================================================================ /ajuda
@@ -1034,6 +1406,9 @@ async def cmd_ajuda(interaction: discord.Interaction):
     embed.add_field(name="💰 Apostas (moedas fictícias)", inline=False, value=(
         "Aposte pelos botões quando alguém entrar em partida.\n"
         "`/carteira` · `/diario` · `/top-moedas`"))
+    embed.add_field(name="🛒 Loja", inline=False, value=(
+        "`/loja` — itens à venda · `/comprar` — compra um item\n"
+        "`/bloquear-apelido` — não deixa mudarem seu apelido · `/config-loja` — liga/desliga castigos (admin)"))
     embed.set_footer(text="Sem o Nome#TAG, os comandos usam a sua conta vinculada.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
