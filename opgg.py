@@ -18,6 +18,15 @@ URL = "https://mcp-api.op.gg/mcp"
 CACHE_HORAS = 6
 CACHE_MAX = 40
 ROTAS_OPGG = {"top": "Topo", "jungle": "Selva", "mid": "Meio", "adc": "Atirador", "support": "Suporte"}
+MODOS_OPGG = {"ranked": "Solo/Duo", "flex": "Flex", "aram": "ARAM"}
+# Sem filtro, o OP.GG usa Esmeralda+ nas ranqueadas e todos os elos no ARAM.
+ELOS_OPGG = {
+    "all": "Todos os elos", "gold_plus": "Ouro+", "platinum_plus": "Platina+", "emerald_plus": "Esmeralda+",
+    "diamond_plus": "Diamante+", "master_plus": "Mestre+",
+    "iron": "Ferro", "bronze": "Bronze", "silver": "Prata", "gold": "Ouro", "platinum": "Platina",
+    "emerald": "Esmeralda", "diamond": "Diamante", "master": "Mestre", "grandmaster": "Grão-Mestre",
+    "challenger": "Desafiante",
+}
 CAMPOS = [
     "data.summary.positions[].name",
     "data.summary.average_stats.{play,win_rate,tier}",
@@ -187,10 +196,12 @@ class OPGG:
                 raise RiotErro(ERRO)
         raise RiotErro(ERRO)
 
-    async def _analise(self, campeao: str, rota: str, modo: str) -> dict:
-        texto = await self._ferramenta("lol_get_champion_analysis", {
-            "champion": campeao, "position": rota, "game_mode": modo, "lang": "pt_BR",
-            "desired_output_fields": CAMPOS})
+    async def _analise(self, campeao: str, rota: str, modo: str, elo: str | None) -> dict:
+        argumentos = {"champion": campeao, "position": rota, "game_mode": modo, "lang": "pt_BR",
+                      "desired_output_fields": CAMPOS}
+        if elo:
+            argumentos["tier"] = elo
+        texto = await self._ferramenta("lol_get_champion_analysis", argumentos)
         try:
             dados = ler_resposta(texto)
         except FormatoInvalido as e:
@@ -201,20 +212,21 @@ class OPGG:
             raise RiotErro(ERRO)
         return dados["data"]
 
-    async def build(self, id_riot: str, rota: str | None, modo: str) -> dict:
+    async def build(self, id_riot: str, rota: str | None, modo: str, elo: str | None = None) -> dict:
         """Build mais usada. rota: top/jungle/mid/adc/support ou None (= rota principal).
-        modo: 'ranked' ou 'aram'. No ARAM a rota não importa."""
+        modo: 'ranked', 'flex' ou 'aram' (no ARAM a rota não importa).
+        elo: uma chave de ELOS_OPGG ou None (= padrão do OP.GG)."""
         campeao = nome_opgg(id_riot)
         if modo == "aram":
             rota = "mid"
         pedida = rota or self._rota_principal.get(campeao, "mid")
-        chave = (campeao, pedida, modo)
+        chave = (campeao, pedida, modo, elo)
         guardado = self._cache.get(chave)
         if guardado and time.time() - guardado[0] < CACHE_HORAS * 3600:
             self._cache.move_to_end(chave)
             return guardado[1]
 
-        d = await self._analise(campeao, pedida, modo)
+        d = await self._analise(campeao, pedida, modo, elo)
         if modo != "aram":
             rotas = [p.get("name", "").lower() for p in (d.get("summary") or {}).get("positions") or []
                      if isinstance(p, dict)]
@@ -223,15 +235,16 @@ class OPGG:
                 self._rota_principal[campeao] = rotas[0]
             if rota is None and rotas and rotas[0] != pedida:  # adivinhou errado: pede a rota principal
                 pedida = rotas[0]
-                d = await self._analise(campeao, pedida, modo)
+                d = await self._analise(campeao, pedida, modo, elo)
             elif rota is not None and rotas and rota not in rotas:
                 raise RiotErro(f"Quase ninguém joga com esse campeão nessa rota. Rotas comuns: "
                                f"{', '.join(ROTAS_OPGG[r] for r in rotas)}.")
 
         build = _resumir(d, pedida, modo)
+        build["elo"] = elo
         if not build["itens"] and not build["runas"]:
-            raise RiotErro("O OP.GG ainda não tem dados suficientes desse campeão.")
-        self._cache[(campeao, pedida, modo)] = (time.time(), build)
+            raise RiotErro("O OP.GG ainda não tem dados suficientes desse campeão nesse filtro.")
+        self._cache[(campeao, pedida, modo, elo)] = (time.time(), build)
         if rota is None:
             self._cache[chave] = (time.time(), build)
         while len(self._cache) > CACHE_MAX:

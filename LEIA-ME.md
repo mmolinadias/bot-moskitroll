@@ -54,7 +54,7 @@ Para guardar uma cópia dos dados, use o botão **Backup** na página do bot na 
 | `/historico [Nome#TAG] [quantidade]` | Últimas partidas |
 | `/maestria [Nome#TAG] [quantidade]` | Campeões com mais maestria |
 | `/aovivo [Nome#TAG]` | Raio-X da partida atual |
-| `/build campeão [rota] [modo]` | Build mais usada do campeão (dados do OP.GG), Ranqueada ou ARAM |
+| `/build campeão [rota] [modo] [elo]` | Build mais usada do campeão (dados do OP.GG): Solo/Duo, Flex ou ARAM, com filtro de elo (padrão Esmeralda+) |
 | `/ultimate-bravery [mapa]` | Sorteia campeão, 6 itens e 2 feitiços (Summoner's Rift ou ARAM) |
 | `/vincular Nome#TAG` / `/desvincular` | Liga ou desliga a sua conta |
 | `/ranking [fila]` | Ranking Solo/Duo e Flex do servidor |

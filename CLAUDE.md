@@ -25,7 +25,7 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 - `config.py` — lê o `.env`.
 
 ## Comandos
-`/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores), `/build campeão [rota] [modo]` (OP.GG), `/ultimate-bravery [mapa]` (sorteio; itens/feitiços baixados no 1º uso, IDs < 10000),
+`/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores), `/build campeão [rota] [modo] [elo]` (OP.GG; elo = parâmetro `tier`, sem filtro = Esmeralda+; URF/Nexus Blitz dão erro fora de época), `/ultimate-bravery [mapa]` (sorteio; itens/feitiços baixados no 1º uso, IDs < 10000),
 `/vincular`, `/desvincular`, `/ranking [fila]` (Solo/Duo e Flex),
 `/semana`, `/carteira`, `/diario`, `/top-moedas`, `/config-alertas`, `/desativar-alertas`, `/ajuda`.
 

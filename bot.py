@@ -20,7 +20,7 @@ from analise import (FILA_PARA_TIPO, FILAS_RANK, TIMES_PT, calcular_notas, calcu
                      texto_pontuacao, texto_variacao, tier_curto, winrate)
 from dados import Dados
 from imagens import gerar_cartao_perfil
-from opgg import OPGG, ROTAS_OPGG
+from opgg import ELOS_OPGG, MODOS_OPGG, OPGG, ROTAS_OPGG
 from riot import NaoEncontrado, RiotAPI, RiotErro
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -920,24 +920,32 @@ async def autocompletar_campeao(interaction: discord.Interaction, atual: str):
 
 @bot.tree.command(name="build", description="Build mais usada de um campeão (dados do OP.GG)")
 @app_commands.describe(campeao="Nome do campeão", rota="Rota (vazio = a mais jogada)",
-                       modo="Ranqueada ou ARAM (padrão: Ranqueada)")
+                       modo="Solo/Duo, Flex ou ARAM (padrão: Solo/Duo)",
+                       elo="Filtrar pelo elo dos jogadores (padrão: Esmeralda+)")
 @app_commands.autocomplete(campeao=autocompletar_campeao)
 @app_commands.choices(
     rota=[app_commands.Choice(name=nome, value=r) for r, nome in ROTAS_OPGG.items()],
-    modo=[app_commands.Choice(name="Ranqueada", value="ranked"), app_commands.Choice(name="ARAM", value="aram")])
+    modo=[app_commands.Choice(name=nome, value=m) for m, nome in MODOS_OPGG.items()],
+    elo=[app_commands.Choice(name=nome, value=e) for e, nome in ELOS_OPGG.items()])
 async def cmd_build(interaction: discord.Interaction, campeao: str,
                     rota: app_commands.Choice[str] | None = None,
-                    modo: app_commands.Choice[str] | None = None):
+                    modo: app_commands.Choice[str] | None = None,
+                    elo: app_commands.Choice[str] | None = None):
     champ = riot.buscar_campeao(campeao)
     if champ is None:
         raise RiotErro(f"Não conheço o campeão **{campeao}**.")
     await interaction.response.defer()
     id_riot = riot.campeoes[champ]["id"]
     modo_v = modo.value if modo else "ranked"
-    b = await opgg.build(id_riot, rota.value if rota else None, modo_v)
+    elo_v = elo.value if elo else None
+    b = await opgg.build(id_riot, rota.value if rota else None, modo_v, elo_v)
 
     nome = riot.nome_campeao(champ)
-    titulo = f"🛠️ Build de {nome} — " + ("ARAM" if modo_v == "aram" else ROTAS_OPGG.get(b["rota"], b["rota"]))
+    onde = "ARAM" if modo_v == "aram" else ROTAS_OPGG.get(b["rota"], b["rota"])
+    if modo_v == "flex":
+        onde += " (Flex)"
+    nome_elo = ELOS_OPGG[elo_v] if elo_v else ("Todos os elos" if modo_v == "aram" else "Esmeralda+")
+    embed_titulo = f"🛠️ Build de {nome} — {onde} · {nome_elo}"
     partes = []
     if b["winrate"] is not None:
         partes.append(f"**{round(b['winrate'] * 100, 1):g}%** de vitórias")
@@ -945,7 +953,10 @@ async def cmd_build(interaction: discord.Interaction, campeao: str,
         partes.append(f"{numero(b['partidas'])} partidas")
     if b["tier"]:
         partes.append(f"Tier {b['tier']}")
-    embed = discord.Embed(title=titulo, description=" · ".join(partes) or None, color=CORES["ouro"])
+    descricao = " · ".join(partes)
+    if b["partidas"] and b["partidas"] < 1000:
+        descricao += "\n⚠️ Poucas partidas nesse filtro: a build pode variar bastante."
+    embed = discord.Embed(title=embed_titulo, description=descricao or None, color=CORES["ouro"])
 
     r = b["runas"]
     if r:
@@ -972,6 +983,8 @@ async def cmd_build(interaction: discord.Interaction, campeao: str,
     slug = riot.slug_campeao(champ)
     link = (f"https://op.gg/pt/lol/modes/aram/{slug}/build" if modo_v == "aram"
             else f"https://op.gg/pt/lol/champions/{slug}/build/{b['rota']}")
+    if elo_v:
+        link += f"?tier={elo_v}"
     view = discord.ui.View()
     view.add_item(discord.ui.Button(label="Ver no OP.GG", url=link))
     await interaction.followup.send(embed=embed, view=view)
