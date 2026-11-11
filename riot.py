@@ -90,13 +90,11 @@ class RiotAPI:
             return await r.json(content_type=None)
 
     async def carregar_estaticos(self):
-        """Baixa nomes de campeões, itens, runas e feitiços em português."""
+        """Baixa os nomes dos campeões em português."""
         try:
             self.versao = (await self._json_dd("/api/versions.json"))[0]
             base = f"/cdn/{self.versao}/data/pt_BR"
-            camps, itens, runas, feiticos = await asyncio.gather(
-                self._json_dd(f"{base}/champion.json"), self._json_dd(f"{base}/item.json"),
-                self._json_dd(f"{base}/runesReforged.json"), self._json_dd(f"{base}/summoner.json"))
+            camps = await self._json_dd(f"{base}/champion.json")
         except Exception as e:
             log.warning("Não consegui carregar dados do Data Dragon: %s", e)
             return
@@ -105,28 +103,7 @@ class RiotAPI:
             self.campeoes[int(c["key"])] = {"id": c["id"], "nome": c["name"]}
             self.campeao_por_id[c["id"]] = int(c["key"])
 
-        for iid, it in itens["data"].items():
-            tags = it.get("tags", [])
-            ouro = it.get("gold", {})
-            total = ouro.get("total", 0)
-            no_mapa = it.get("maps", {}).get("11", False)
-            compravel = ouro.get("purchasable", True) and no_mapa
-            botas = "Boots" in tags and total >= 700 and no_mapa
-            final = (compravel and not it.get("into") and total >= 2000 and not botas
-                     and "Consumable" not in tags and "Trinket" not in tags)
-            self.itens[int(iid)] = {"nome": it["name"], "botas": botas, "final": final}
-
-        for arvore in runas:
-            self.runas[arvore["id"]] = {"nome": arvore["name"], "icone": arvore["icon"]}
-            for linha in arvore["slots"]:
-                for r in linha["runes"]:
-                    self.runas[r["id"]] = {"nome": r["name"], "icone": r["icon"]}
-
-        for f in feiticos["data"].values():
-            self.feiticos[int(f["key"])] = {"nome": f["name"], "id": f["id"]}
-
-        log.info("Data Dragon %s: %d campeões, %d itens, %d runas", self.versao,
-                 len(self.campeoes), len(self.itens), len(self.runas))
+        log.info("Data Dragon %s: %d campeões", self.versao, len(self.campeoes))
 
     # ------------------------------------------------------------ nomes e imagens
     def nome_campeao(self, key: int) -> str:
@@ -214,7 +191,7 @@ class RiotAPI:
                 log.debug("Falha ao baixar %s: %s", url, e)
         if dados:
             self._imagens[url] = dados
-            if len(self._imagens) > 400:
+            if len(self._imagens) > 100:
                 self._imagens.popitem(last=False)
         return dados
 

@@ -2,9 +2,8 @@
 
 ## O que tem de novo
 - **`/perfil`**: cartão de perfil em imagem com ícone, elo de Solo/Duo e Flex, campeões favoritos e as últimas 10 partidas.
-- **`/aovivo`**: raio-X da partida, com elo, winrate e maestria dos 10 jogadores, qual time é favorito e um botão de build.
-- **`/build campeão [rota]`**: build mais usada no alto elo, com runas, feitiços, botas e itens. Vem em imagem e em texto, com links para OP.GG e U.GG.
-- **Alertas de partida**: quando alguém vinculado entra em partida, o bot posta o raio-X, os botões de **aposta** e os botões de **build**.
+- **`/aovivo`**: raio-X da partida, com elo, winrate e maestria dos 10 jogadores, e qual time é favorito.
+- **Alertas de partida**: quando alguém vinculado entra em partida, o bot posta o raio-X, e os botões de **aposta**.
 - **Resumo pós-partida**: resultado, KDA, dano, participação, CS, visão, **nota de 0 a 10**, **MVP/ACE**, **PDL ganho ou perdido** (avisa quando alguém sobe de elo) e pentakill.
 - **Apostas com moedas fictícias**: aposte no time azul ou vermelho. A odd depende do elo dos times. Comandos: `/carteira`, `/diario` e `/top-moedas`.
 - **Resumo semanal automático** (domingo às 20h): MVP da semana, quem mais jogou, quem mais ganhou, quem mais subiu ou caiu de PDL, quem mais morreu, pé frio, melhor partida e pentakills. Também dá para ver a qualquer hora com `/semana`.
@@ -43,7 +42,6 @@
 | `/historico [Nome#TAG] [quantidade]` | Últimas partidas |
 | `/maestria [Nome#TAG] [quantidade]` | Campeões com mais maestria |
 | `/aovivo [Nome#TAG]` | Raio-X da partida atual |
-| `/build campeão [rota]` | Build do alto elo |
 | `/vincular Nome#TAG` / `/desvincular` | Liga ou desliga a sua conta |
 | `/ranking [fila]` | Ranking Solo/Duo e Flex do servidor |
 | `/semana` | Resumo dos últimos 7 dias |
@@ -52,7 +50,6 @@
 | `/ajuda` | Lista os comandos |
 
 ## Como funcionam algumas coisas
-- **Build:** a Riot não tem uma API de builds. Por isso, o bot coleta partidas ranqueadas de Desafiante e Grão-Mestre do seu servidor aos poucos, enquanto fica ligado, e calcula o que é mais usado. Nas primeiras horas, só os campeões mais populares vão ter dados. Quanto mais tempo ligado, melhor fica. Os dados ficam salvos em `builds.json`. Para desligar a coleta, use `COLETAR_BUILDS=nao`.
 - **Nota de 0 a 10:** compara cada jogador com os outros 9 em KDA, participação em abates, dano, ouro e visão. O vencedor ganha um pequeno bônus.
 - **Apostas:** ficam abertas por 8 minutos depois do aviso. Quem está jogando só pode apostar no próprio time. Se for remake, o dinheiro volta. As moedas não valem nada de verdade.
 - **Moedas extras:** quem joga ganha +50 moedas por vitória e +100 se for MVP ou ACE. O MVP da semana ganha +500.
@@ -62,4 +59,3 @@
 - **"A chave da Riot é inválida ou expirou"**: gere uma chave nova, coloque no `.env` e reinicie. Com a Personal Key, isso para de acontecer.
 - **Os comandos novos não aparecem**: confira se o `GUILD_ID` está no `.env`, reinicie o bot e reabra o Discord (Ctrl + R).
 - **Erro `No module named PIL`**: rode `pip install -r requirements.txt` de novo.
-- **O `/build` diz que não tem dados**: é normal nas primeiras horas. Deixe o bot ligado.

@@ -14,25 +14,23 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 ## Arquivos
 - `bot.py` — comandos slash, botões (DynamicItem persistentes), loops (`tasks.loop`).
 - `riot.py` — `RiotAPI`: requisições com `Limitador` (20/s e 100/2min), Data Dragon pt_BR
-  (campeões, itens, runas, feitiços), cache de imagens em `cache/`.
+  (só nomes de campeões), cache de imagens em `cache/` (até 100 na memória).
 - `analise.py` — textos de elo, `pontuacao_elo` (100 pts = 1 divisão), nota 0–10 por percentil
   (KDA, participação, dano, ouro, visão), MVP/ACE, odds das apostas.
-- `builds.py` — coleta partidas ranqueadas de Desafiante/Grão-Mestre aos poucos e agrega
-  itens/botas/runas/feitiços por `campeao:rota` em `builds.json`.
-- `imagens.py` — Pillow: cartão de `/perfil` e imagem do `/build`.
+- `imagens.py` — Pillow: cartão de `/perfil`.
 - `dados.py` — persistência em `dados.json` (vínculos, canal de alertas, partidas em andamento,
   pendentes, histórico, moedas, controle do resumo semanal). Tudo indexado por id do servidor.
 - `config.py` — lê o `.env`.
 
 ## Comandos
-`/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores + botão de build),
-`/build campeão [rota]`, `/vincular`, `/desvincular`, `/ranking [fila]` (Solo/Duo e Flex),
+`/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores),
+`/vincular`, `/desvincular`, `/ranking [fila]` (Solo/Duo e Flex),
 `/semana`, `/carteira`, `/diario`, `/top-moedas`, `/config-alertas`, `/desativar-alertas`, `/ajuda`.
 
 ## Fluxo dos alertas (`loop_partidas`, a cada `INTERVALO_ALERTA_MIN`)
 1. Para cada servidor com canal de alertas, checa o Spectator-V5 de cada membro vinculado.
 2. Partida nova → salva elo de antes, posta raio-X + botões de aposta (Azul/Vermelho, abertas por
-   `TEMPO_APOSTAS_MIN`) + botões de build. Amigos na mesma partida viram um único aviso.
+   `TEMPO_APOSTAS_MIN`). Amigos na mesma partida viram um único aviso.
 3. Partida sumiu do spectator → vai para `pendentes`; busca `BR1_{gameId}` no Match-V5, espera a
    Riot atualizar o PDL (até 3 tentativas), posta o resumo (nota, MVP, PDL, pentakill), paga as
    apostas (remake devolve), dá moedas (+50 vitória, +100 MVP/ACE) e grava no histórico.
@@ -41,7 +39,9 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 ## Estado e limitações conhecidas
 - Testado só com dados simulados (o ambiente onde foi escrito não acessava a Riot). Bugs reais
   podem aparecer com respostas de verdade da API — peça o log do terminal ao usuário.
-- `/build` começa vazio; depende da coleta ao longo de horas.
+- O `/build` e a coleta de builds foram removidos (2026-11-10) para caber nos 100 MB da Discloud.
+  O bot também usa `max_messages=None` e não baixa itens/runas/feitiços do Data Dragon.
+- Hospedagem: Discloud (plano grátis, 100 MB). `discloud.config` na raiz; o .zip vai com o `.env`.
 - Apostas usam moedas fictícias sem valor real (importante para as políticas da Riot).
 - Próximos passos que o usuário mencionou: hospedar 24h de graça (sugestão: Oracle Cloud Always
   Free) e talvez publicar o código no GitHub para usar como "Product URL" no pedido da Personal Key.

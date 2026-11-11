@@ -14,12 +14,11 @@ from discord.ext import tasks
 from discord.utils import escape_markdown
 
 import config
-from analise import (FILA_PARA_TIPO, FILAS_RANK, ROTAS_PT, TIMES_PT, calcular_notas, calcular_odds,
+from analise import (FILA_PARA_TIPO, FILAS_RANK, TIMES_PT, calcular_notas, calcular_odds,
                      compacto, kda, melhor_fila, nome_fila, numero, pontuacao_elo, texto_elo,
                      texto_pontuacao, texto_variacao, tier_curto, winrate)
-from builds import Builds
 from dados import Dados
-from imagens import gerar_cartao_build, gerar_cartao_perfil
+from imagens import gerar_cartao_perfil
 from riot import NaoEncontrado, RiotAPI, RiotErro
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -27,7 +26,6 @@ log = logging.getLogger("bot-lol")
 
 riot = RiotAPI()
 store = Dados(config.PASTA / "dados.json")
-builds = Builds(riot, config.PASTA / "builds.json")
 
 CORES = {"ok": 0x2ECC71, "info": 0x3498DB, "aviso": 0xE67E22, "erro": 0xE74C3C, "ouro": 0xF1C40F}
 SEM_MENCAO = discord.AllowedMentions.none()
@@ -42,12 +40,12 @@ except Exception:
 # ================================================================ bot
 class BotLoL(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
+        super().__init__(intents=discord.Intents.default(), max_messages=None)
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
         await riot.iniciar()
-        self.add_dynamic_items(BotaoBuild, BotaoAposta)
+        self.add_dynamic_items(BotaoAposta)
         if config.GUILD_ID:
             guild = discord.Object(id=int(config.GUILD_ID))
             self.tree.copy_global_to(guild=guild)
@@ -58,11 +56,8 @@ class BotLoL(discord.Client):
             log.info("Comandos sincronizados globalmente (podem levar até 1h para aparecer)")
         loop_partidas.start()
         loop_semanal.start()
-        if config.COLETAR_BUILDS:
-            loop_builds.start()
 
     async def close(self):
-        builds.salvar()
         store.salvar()
         await riot.fechar()
         await super().close()
@@ -234,94 +229,6 @@ async def cmd_perfil(interaction: discord.Interaction, jogador: str | None = Non
     await interaction.followup.send(file=discord.File(arquivo, filename="perfil.png"))
 
 
-# ================================================================ /build
-async def autocompletar_campeao(interaction: discord.Interaction, atual: str):
-    return [app_commands.Choice(name=nome, value=str(key)) for key, nome in riot.sugerir_campeoes(atual)]
-
-
-ESCOLHAS_ROTA = [app_commands.Choice(name=nome, value=rota) for rota, nome in ROTAS_PT.items()]
-
-
-def botoes_sites(champ: int) -> discord.ui.View:
-    view = discord.ui.View()
-    slug = riot.slug_campeao(champ)
-    if slug:
-        view.add_item(discord.ui.Button(label="OP.GG", url=f"https://op.gg/lol/champions/{slug}/build"))
-        view.add_item(discord.ui.Button(label="U.GG", url=f"https://u.gg/lol/champions/{slug}/build"))
-    return view
-
-
-async def enviar_build(interaction: discord.Interaction, champ: int, rota: str | None, ephemeral: bool):
-    nome = riot.nome_campeao(champ)
-    b = builds.consultar(champ, rota)
-    if not b:
-        onde = f" de **{ROTAS_PT[rota]}**" if rota else ""
-        texto = (f"Ainda não tenho partidas suficientes de **{nome}**{onde} no alto elo.\n\n"
-                 f"O bot coleta partidas de Desafiante e Grão-Mestre enquanto está ligado "
-                 f"({numero(builds.total_partidas())} analisadas até agora). Campeões populares aparecem "
-                 f"em algumas horas. Enquanto isso, veja a build nos sites abaixo.")
-        if not config.COLETAR_BUILDS:
-            texto = "A coleta de builds está desligada (`COLETAR_BUILDS` no .env). Veja nos sites abaixo."
-        await interaction.followup.send(
-            embed=discord.Embed(title=f"🛠️ Build de {nome}", description=texto, color=CORES["aviso"]),
-            view=botoes_sites(champ), ephemeral=ephemeral)
-        return
-
-    embed = discord.Embed(title=f"🛠️ Build de {nome} — {ROTAS_PT[b['rota']]}", color=CORES["ouro"],
-                          description=f"Baseado em **{b['jogos']}** partidas de alto elo · "
-                                      f"**{b['wr']}%** de vitórias")
-    r = b.get("runas")
-    if r:
-        embed.add_field(name=f"Runas ({r['pct']}% · {r['wr']}% WR)", inline=False, value=(
-            f"**{riot.nome_runa(r['primaria'])}:** " + ", ".join(riot.nome_runa(x) for x in r["perks"][:4]) +
-            f"\n**{riot.nome_runa(r['secundaria'])}:** " + ", ".join(riot.nome_runa(x) for x in r["perks"][4:6])))
-    if b.get("feiticos"):
-        embed.add_field(name="Feitiços", value=" + ".join(riot.nome_feitico(x) for x in b["feiticos"]["ids"]))
-    if b.get("botas"):
-        embed.add_field(name="Botas", value=riot.nome_item(b["botas"]["id"]))
-    if b.get("itens"):
-        embed.add_field(name="Itens mais usados", inline=False, value="\n".join(
-            f"• **{riot.nome_item(i['id'])}** — {i['pct']}% ({i['wr']}% WR)" for i in b["itens"]))
-    outras = [f"{ROTAS_PT[k]} ({v})" for k, v in b["rotas"].items() if k != b["rota"]]
-    if outras:
-        embed.set_footer(text="Também jogado em: " + ", ".join(outras) + " — use a opção 'rota'")
-    arquivo = await gerar_cartao_build(riot, b)
-    embed.set_image(url="attachment://build.png")
-    await interaction.followup.send(embed=embed, file=discord.File(arquivo, filename="build.png"),
-                                    view=botoes_sites(champ), ephemeral=ephemeral)
-
-
-@bot.tree.command(name="build", description="Build mais usada no alto elo para um campeão")
-@app_commands.describe(campeao="Nome do campeão", rota="Rota (opcional)")
-@app_commands.autocomplete(campeao=autocompletar_campeao)
-@app_commands.choices(rota=ESCOLHAS_ROTA)
-async def cmd_build(interaction: discord.Interaction, campeao: str,
-                    rota: app_commands.Choice[str] | None = None):
-    champ = riot.buscar_campeao(campeao)
-    if champ is None:
-        raise RiotErro(f"Não conheço o campeão **{campeao}**.")
-    await interaction.response.defer()
-    await enviar_build(interaction, champ, rota.value if rota else None, ephemeral=False)
-
-
-class BotaoBuild(discord.ui.DynamicItem[discord.ui.Button], template=r"build:(?P<champ>\d+)"):
-    def __init__(self, champ: int, rotulo: str | None = None):
-        super().__init__(discord.ui.Button(label=rotulo or "Build", emoji="🛠️",
-                                           style=discord.ButtonStyle.secondary, custom_id=f"build:{champ}"))
-        self.champ = champ
-
-    @classmethod
-    async def from_custom_id(cls, interaction, item, match):
-        return cls(int(match["champ"]))
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            await enviar_build(interaction, self.champ, None, ephemeral=True)
-        except RiotErro as e:
-            await interaction.followup.send(f"❌ {e}", ephemeral=True)
-
-
 # ================================================================ raio-X da partida ao vivo
 async def montar_raio_x(jogo: dict, destaque: set[str], titulo: str = "🎮 Partida ao vivo"):
     """Embed com elo, winrate e maestria dos 10 jogadores + força de cada time."""
@@ -398,12 +305,9 @@ async def cmd_aovivo(interaction: discord.Interaction, jogador: str | None = Non
         return
     embed, _ = await montar_raio_x(jogo, {conta["puuid"]}, f"🎮 {nome_conta(conta)} está em partida!")
     eu = next((p for p in jogo["participants"] if p.get("puuid") == conta["puuid"]), None)
-    view = None
     if eu and riot.url_campeao(eu.get("championId")):
         embed.set_thumbnail(url=riot.url_campeao(eu["championId"]))
-        view = discord.ui.View()
-        view.add_item(BotaoBuild(eu["championId"], f"Build de {riot.nome_campeao(eu['championId'])}"))
-    await interaction.followup.send(embed=embed, view=view or discord.utils.MISSING)
+    await interaction.followup.send(embed=embed)
 
 
 # ================================================================ /vincular /desvincular /ranking
@@ -656,8 +560,6 @@ async def nova_partida(g: str, canal, game_id: str, jogo: dict, usuarios: list[s
                               f"🔴 paga **{odds['200']:.2f}x**")
         view.add_item(BotaoAposta(g, game_id, 100, f"Azul vence ({odds['100']:.2f}x)"))
         view.add_item(BotaoAposta(g, game_id, 200, f"Vermelho vence ({odds['200']:.2f}x)"))
-    for champ in list(dict.fromkeys(j["campeao"] for j in jogadores.values() if j["campeao"]))[:3]:
-        view.add_item(BotaoBuild(champ, f"Build {riot.nome_campeao(champ)}"))
     primeiro = next(iter(jogadores.values()))
     if riot.url_campeao(primeiro["campeao"]):
         embed.set_thumbnail(url=riot.url_campeao(primeiro["campeao"]))
@@ -958,22 +860,6 @@ async def _antes_semanal():
     await bot.wait_until_ready()
 
 
-# ================================================================ coleta de builds
-@tasks.loop(seconds=75)
-async def loop_builds():
-    try:
-        await builds.ciclo()
-    except RiotErro as e:
-        log.warning("Coleta de builds: %s", e)
-    except Exception:
-        log.exception("Erro na coleta de builds")
-
-
-@loop_builds.before_loop
-async def _antes_builds():
-    await bot.wait_until_ready()
-
-
 # ================================================================ /ajuda
 @bot.tree.command(name="ajuda", description="Lista os comandos do bot")
 async def cmd_ajuda(interaction: discord.Interaction):
@@ -983,8 +869,7 @@ async def cmd_ajuda(interaction: discord.Interaction):
         "`/elo` — elo, PDL e winrate\n"
         "`/historico` — últimas partidas\n"
         "`/maestria` — campeões com mais maestria\n"
-        "`/aovivo` — raio-X da partida atual (elo dos 10 jogadores)\n"
-        "`/build campeão` — build mais usada no alto elo"))
+        "`/aovivo` — raio-X da partida atual (elo dos 10 jogadores)"))
     embed.add_field(name="👥 Servidor", inline=False, value=(
         "`/vincular Nome#TAG` — liga sua conta\n"
         "`/ranking` — ranking de elo (Solo/Duo e Flex)\n"

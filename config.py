@@ -29,7 +29,6 @@ REGION = os.getenv("RIOT_REGION", "americas").strip().lower()
 GUILD_ID = os.getenv("GUILD_ID", "").strip()
 
 INTERVALO_ALERTA = max(1, _int("INTERVALO_ALERTA_MIN", 2))
-COLETAR_BUILDS = _bool("COLETAR_BUILDS", True)
 
 # Limites da chave (dev e personal: 20 por segundo e 100 a cada 2 minutos)
 LIMITE_SEG = _int("RIOT_LIMITE_POR_SEGUNDO", 20)
