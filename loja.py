@@ -8,6 +8,8 @@ import random
 import re
 import time
 
+from discord.utils import escape_markdown
+
 from riot import RiotErro
 
 # id -> dados do item. "precos" = preço por duração (minutos) nos castigos.
@@ -66,6 +68,14 @@ DESAFIO_HORAS = 48
 PREMIO_DESAFIO = 1600
 APELIDO_HORAS = 24
 _EMOJI_DISCORD = re.compile(r"^<a?:\w{2,32}:\d{15,22}>$")
+
+
+def nome_lol(store, g, u) -> str:
+    """Nome do membro no LoL (ex.: **Titan**); se ele não tiver conta vinculada, a menção do Discord."""
+    v = store.de("vinculos", g).get(str(u))
+    if v and v.get("riot_id"):
+        return f"**{escape_markdown(v['riot_id'].rsplit('#', 1)[0])}**"
+    return f"<@{u}>"
 
 
 class ErroLoja(RiotErro):
@@ -148,7 +158,7 @@ class DadosLoja:
         d = self.usuario(g, alvo_id)
         ate = d.get("imune_ate", 0)
         if ate > time.time():
-            raise ErroLoja(f"<@{alvo_id}> acabou de levar um castigo e está protegido até <t:{int(ate)}:t>.")
+            raise ErroLoja(f"{nome_lol(self.store, g, alvo_id)} acabou de levar um castigo e está protegido até <t:{int(ate)}:t>.")
 
     def usar_escudo(self, g, alvo_id) -> bool:
         d = self.usuario(g, alvo_id)
@@ -210,6 +220,6 @@ class DadosLoja:
             return None
         desafios.pop(str(u))
         if venceu:
-            return f"🎲 Cumpriu o **Desafio Bravery** de <@{d['de']}>: +{PREMIO_DESAFIO:,} moedas!".replace(",", "."), \
+            return f"🎲 Cumpriu o **Desafio Bravery** de {nome_lol(self.store, g, d['de'])}: +{PREMIO_DESAFIO:,} moedas!".replace(",", "."), \
                 PREMIO_DESAFIO
-        return f"🎲 Perdeu o **Desafio Bravery** de <@{d['de']}>. Sem prêmio dessa vez.", 0
+        return f"🎲 Perdeu o **Desafio Bravery** de {nome_lol(self.store, g, d['de'])}. Sem prêmio dessa vez.", 0

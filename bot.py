@@ -22,7 +22,7 @@ from analise import (FILA_PARA_TIPO, FILAS_RANK, TIMES_PT, calcular_notas, calcu
 from dados import Dados
 from imagens import gerar_cartao_perfil
 from loja import (APELIDO_HORAS, CASTIGOS, CATEGORIAS, CONTAVEIS, DESAFIO_HORAS, ITENS, PREMIO_DESAFIO,
-                  DadosLoja, ErroLoja, emoji_valido, limpar_texto, preco, texto_preco)
+                  DadosLoja, ErroLoja, emoji_valido, limpar_texto, nome_lol, preco, texto_preco)
 from loja import CORES as CORES_LOJA
 from coleta import NOMES_FILAS, ROTAS, Coleta, _ordem_patch
 from riot import NaoEncontrado, RiotAPI, RiotErro
@@ -160,6 +160,11 @@ async def resolver_jogador(jogador: str | None, interaction: discord.Interaction
             nome, tag = v["riot_id"].rsplit("#", 1)
             return {"puuid": v["puuid"], "gameName": nome, "tagLine": tag}
     raise RiotErro("Informe um jogador (ex.: `Faker#KR1`) ou use `/vincular` antes.")
+
+
+def nome(g, u) -> str:
+    """Nome do membro no LoL em negrito (ou a menção, se não tiver conta vinculada)."""
+    return nome_lol(store, g, u)
 
 
 def plural(n: int, palavra: str) -> str:
@@ -435,12 +440,12 @@ async def cmd_ranking(interaction: discord.Interaction, fila: app_commands.Choic
         linhas = []
         for i, (uid, rid, e) in enumerate(lista[:20]):
             pos = medalhas[i] if i < 3 else f"`{i + 1}.`"
-            linhas.append(f"{pos} {loja.enfeite(interaction.guild.id, uid)}<@{uid}> · {escape_markdown(rid)}\n　**{texto_elo(e)}** · "
+            linhas.append(f"{pos} {loja.enfeite(interaction.guild.id, uid)}**{escape_markdown(rid)}**\n　**{texto_elo(e)}** · "
                           f"{winrate(e)}% WR ({plural(e['wins'] + e['losses'], 'jogo')})")
         if not linhas:
             linhas.append("Ninguém tem classificação nessa fila ainda.")
         if sem:
-            linhas.append("\n**Sem classificação:** " + ", ".join(f"<@{u}>" for u, _, _ in sem))
+            linhas.append("\n**Sem classificação:** " + ", ".join(nome(interaction.guild.id, u) for u, _, _ in sem))
         embeds.append(discord.Embed(title=f"{titulos[tipo]} — {interaction.guild.name}",
                                     description="\n".join(linhas)[:4000],
                                     color=CORES["info"] if tipo == "RANKED_SOLO_5x5" else 0x9B59B6))
@@ -494,7 +499,7 @@ class ModalAposta(discord.ui.Modal):
         premio = int(valor * odd * (1.5 if aposta.get("turbo") else 1))
         extra = f" · usando {' e '.join(usados)}" if usados else ""
         await interaction.response.send_message(
-            f"💰 {interaction.user.mention} apostou **{numero(valor)}** moedas no {emoji} **{TIMES_PT[self.time_id]}** "
+            f"💰 {nome(self.g, interaction.user.id)} apostou **{numero(valor)}** moedas no {emoji} **{TIMES_PT[self.time_id]}** "
             f"(paga {odd:.2f}x → {numero(premio)}){extra}", allowed_mentions=SEM_MENCAO)
 
 
@@ -563,7 +568,7 @@ async def cmd_top_moedas(interaction: discord.Interaction):
         return
     top = sorted(carteiras.items(), key=lambda kv: -kv[1]["saldo"])[:10]
     medalhas = ["🥇", "🥈", "🥉"]
-    linhas = [f"{medalhas[i] if i < 3 else f'`{i + 1}.`'} {loja.enfeite(interaction.guild.id, u)}<@{u}> — "
+    linhas = [f"{medalhas[i] if i < 3 else f'`{i + 1}.`'} {loja.enfeite(interaction.guild.id, u)}{nome(interaction.guild.id, u)} — "
               f"**{numero(c['saldo'])}** moedas"
               for i, (u, c) in enumerate(top)]
     await interaction.response.send_message(embed=discord.Embed(
@@ -636,7 +641,7 @@ async def nova_partida(g: str, canal, game_id: str, jogo: dict, usuarios: list[s
     if riot.url_campeao(primeiro["campeao"]):
         embed.set_thumbnail(url=riot.url_campeao(primeiro["campeao"]))
 
-    mencoes = ", ".join(f"<@{u}>" for u in jogadores)
+    mencoes = ", ".join(f"{nome(g, u)}" for u in jogadores)
     texto = f"🎮 {mencoes} {'entrou' if len(jogadores) == 1 else 'entraram'} em partida!"
     try:
         await canal.send(content=texto, embed=embed, view=view, allowed_mentions=SEM_MENCAO)
@@ -654,18 +659,18 @@ def liquidar_apostas(g: str, partida: dict, vencedor: int | None, remake: bool) 
         if remake or vencedor is None:
             c["saldo"] += a["valor"]
             loja.devolver_itens(g, u, a)
-            linhas.append(f"↩️ <@{u}> recebeu de volta {numero(a['valor'])}")
+            linhas.append(f"↩️ {nome(g, u)} recebeu de volta {numero(a['valor'])}")
         elif a["time"] == vencedor:
             premio = int(a["valor"] * a["odd"] * (1.5 if a.get("turbo") else 1))
             c["saldo"] += premio
-            linhas.append(f"🤑 <@{u}> ganhou **{numero(premio)}** (+{numero(premio - a['valor'])})"
+            linhas.append(f"🤑 {nome(g, u)} ganhou **{numero(premio)}** (+{numero(premio - a['valor'])})"
                           + (" 🚀" if a.get("turbo") else ""))
         elif a.get("seguro"):
             volta = a["valor"] // 2
             c["saldo"] += volta
-            linhas.append(f"🛟 <@{u}> perdeu {numero(a['valor'])}, mas o seguro devolveu {numero(volta)}")
+            linhas.append(f"🛟 {nome(g, u)} perdeu {numero(a['valor'])}, mas o seguro devolveu {numero(volta)}")
         else:
-            linhas.append(f"💸 <@{u}> perdeu {numero(a['valor'])}")
+            linhas.append(f"💸 {nome(g, u)} perdeu {numero(a['valor'])}")
     return linhas
 
 
@@ -707,7 +712,7 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
         dano = eu.get("totalDamageDealtToChampions", 0)
         pct_dano = round(dano / max(dano_time[eu["teamId"]], 1) * 100)
         kp = round((k + a) / max(abates_time[eu["teamId"]], 1) * 100)
-        linhas = [f"{loja.enfeite(g, u)}<@{u}> de **{champ}** — **{k}/{d}/{a}** (KDA {kda(k, d, a):.1f})",
+        linhas = [f"{loja.enfeite(g, u)}{nome(g, u)} de **{champ}** — **{k}/{d}/{a}** (KDA {kda(k, d, a):.1f})",
                   f"💥 {numero(dano)} de dano ({pct_dano}% do time) · 🗡️ {kp}% de participação",
                   f"🌾 {cs} CS ({cs / minutos:.1f}/min) · 👁️ visão {eu.get('visionScore', 0)} · 💰 {numero(eu.get('goldEarned', 0))}",
                   f"⭐ Nota **{nota.get('nota', '-')}**/10{selo}"]
@@ -881,35 +886,35 @@ def montar_semana(g: str, dias: int = 7):
     linhas = []
     elegiveis = [u for u in por if len(por[u]) >= 3] or list(por)
     mvp = max(elegiveis, key=lambda u: media(u, "nota"))
-    linhas.append(f"🏆 **MVP da semana:** <@{mvp}> — nota média **{media(mvp, 'nota'):.1f}** "
+    linhas.append(f"🏆 **MVP da semana:** {nome(g, mvp)} — nota média **{media(mvp, 'nota'):.1f}** "
                   f"em {plural(len(por[mvp]), 'partida')} (+500 moedas)")
     viciado = max(por, key=lambda u: len(por[u]))
-    linhas.append(f"🎮 **Viciado:** <@{viciado}> — {plural(len(por[viciado]), 'partida')}")
+    linhas.append(f"🎮 **Viciado:** {nome(g, viciado)} — {plural(len(por[viciado]), 'partida')}")
     vitorioso = max(por, key=lambda u: (sum(e["vitoria"] for e in por[u]), wr(u)))
-    linhas.append(f"✅ **Mais vitórias:** <@{vitorioso}> — {sum(e['vitoria'] for e in por[vitorioso])} "
+    linhas.append(f"✅ **Mais vitórias:** {nome(g, vitorioso)} — {sum(e['vitoria'] for e in por[vitorioso])} "
                   f"({wr(vitorioso):.0f}% WR)")
     pdl = {u: sum(e["pdl"] for e in es if e.get("pdl") is not None) for u, es in por.items()
            if any(e.get("pdl") is not None for e in es)}
     if pdl:
         subiu = max(pdl, key=pdl.get)
         if pdl[subiu] > 0:
-            linhas.append(f"📈 **Mais PDL ganho:** <@{subiu}> — +{pdl[subiu]} PDL")
+            linhas.append(f"📈 **Mais PDL ganho:** {nome(g, subiu)} — +{pdl[subiu]} PDL")
         caiu = min(pdl, key=pdl.get)
         if pdl[caiu] < 0:
-            linhas.append(f"📉 **Mais PDL perdido:** <@{caiu}> — {pdl[caiu]} PDL")
+            linhas.append(f"📉 **Mais PDL perdido:** {nome(g, caiu)} — {pdl[caiu]} PDL")
     morreu = max(por, key=lambda u: sum(e["d"] for e in por[u]))
-    linhas.append(f"💀 **Quem mais morreu:** <@{morreu}> — {sum(e['d'] for e in por[morreu])} mortes "
+    linhas.append(f"💀 **Quem mais morreu:** {nome(g, morreu)} — {sum(e['d'] for e in por[morreu])} mortes "
                   f"({media(morreu, 'd'):.1f} por jogo)")
     if len(elegiveis) > 1:
         frio = min(elegiveis, key=wr)
         if wr(frio) < 50:
-            linhas.append(f"🥶 **Pé frio:** <@{frio}> — {wr(frio):.0f}% de vitórias")
+            linhas.append(f"🥶 **Pé frio:** {nome(g, frio)} — {wr(frio):.0f}% de vitórias")
     melhor = max(hist, key=lambda e: e["nota"])
-    linhas.append(f"\n⭐ **Melhor partida:** <@{melhor['user']}> de {melhor['campeao']} "
+    linhas.append(f"\n⭐ **Melhor partida:** {nome(g, melhor['user'])} de {melhor['campeao']} "
                   f"{melhor['k']}/{melhor['d']}/{melhor['a']} (nota {melhor['nota']})")
     pentas = [e for e in hist if e.get("penta")]
     if pentas:
-        linhas.append("🔥 **Pentakills:** " + ", ".join(f"<@{e['user']}> de {e['campeao']}" for e in pentas))
+        linhas.append("🔥 **Pentakills:** " + ", ".join(f"{nome(g, e['user'])} de {e['campeao']}" for e in pentas))
     vit = sum(e["vitoria"] for e in hist)
     embed = discord.Embed(title="📅 Resumo da semana", description="\n".join(linhas), color=CORES["ouro"])
     embed.set_footer(text=f"{len(hist)} partidas do servidor · {vit}V {len(hist) - vit}D")
@@ -1040,7 +1045,8 @@ async def cmd_ultimate_bravery(interaction: discord.Interaction, mapa: app_comma
     await interaction.response.defer()
     mapa_id = mapa.value if mapa else "11"
     champ, build, sem_botas, feiticos = await sortear_bravery(mapa_id)
-    embed = embed_bravery(mapa_id, f"{interaction.user.mention}, você vai jogar de **{riot.nome_campeao(champ)}**!",
+    quem = nome(interaction.guild.id, interaction.user.id) if interaction.guild else interaction.user.mention
+    embed = embed_bravery(mapa_id, f"{quem}, você vai jogar de **{riot.nome_campeao(champ)}**!",
                           champ, build, sem_botas, feiticos)
     await interaction.followup.send(embed=embed, allowed_mentions=SEM_MENCAO)
 
@@ -1102,7 +1108,7 @@ def _checar_permissao(guild: discord.Guild, **perms):
 def _na_call(guild: discord.Guild, membro: discord.Member) -> discord.Member:
     m = guild.get_member(membro.id)
     if not m or not m.voice or not m.voice.channel:
-        raise ErroLoja(f"{membro.mention} não está em nenhuma call agora.")
+        raise ErroLoja(f"{nome(guild.id, membro.id)} não está em nenhuma call agora.")
     return m
 
 
@@ -1182,44 +1188,45 @@ async def _executar_compra(interaction: discord.Interaction, i: str, alvo: disco
     # itens com alvo
     if i == "desafio":
         if str(alvo.id) not in store.de("vinculos", g):
-            raise ErroLoja(f"{alvo.mention} precisa ter usado `/vincular` para o bot ver as partidas dele.")
+            raise ErroLoja(f"{nome(g, alvo.id)} precisa ter usado `/vincular` para o bot ver as partidas dele.")
         if not store.d["alertas"].get(g):
             raise ErroLoja("Os alertas precisam estar ligados (`/config-alertas`) para o bot ver o resultado.")
         atual = loja.servidor(g)["desafios"].get(str(alvo.id))
         if atual and atual["ate"] > time.time():
-            raise ErroLoja(f"{alvo.mention} já tem um Desafio Bravery valendo.")
+            raise ErroLoja(f"{nome(g, alvo.id)} já tem um Desafio Bravery valendo.")
         await interaction.response.defer()
         champ, build, sem_botas, feiticos = await sortear_bravery("11")
         ate = time.time() + DESAFIO_HORAS * 3600
         loja.servidor(g)["desafios"][str(alvo.id)] = {"de": str(eu.id), "campeao": champ, "ate": ate}
-        embed = embed_bravery("11", f"{alvo.mention}, {eu.mention} te desafiou! Jogue de "
+        embed = embed_bravery("11", f"{nome(g, alvo.id)}, {nome(g, eu.id)} te desafiou! Jogue de "
                                     f"**{riot.nome_campeao(champ)}** e vença até <t:{int(ate)}:f> para ganhar "
                                     f"**{numero(PREMIO_DESAFIO)}** moedas.", champ, build, sem_botas, feiticos)
-        await interaction.followup.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=[alvo]))
-        return f"Desafio enviado para {alvo.mention}."
+        await interaction.followup.send(content=alvo.mention, embed=embed,
+                                        allowed_mentions=discord.AllowedMentions(users=[alvo]))
+        return f"Desafio enviado para {nome(g, alvo.id)}."
 
     # castigos e apelido: o escudo do alvo bloqueia (e a compra é cobrada mesmo assim)
     if loja.usar_escudo(g, alvo.id):
-        return f"🛡️ {alvo.mention} tinha um **Escudo** e bloqueou! Suas moedas foram embora."
+        return f"🛡️ {nome(g, alvo.id)} tinha um **Escudo** e bloqueou! Suas moedas foram embora."
     motivo = f"Loja do bot: comprado por {eu}"
     try:
         if i == "apelido":
             alvo_dados = loja.usuario(g, alvo.id)
             if alvo_dados.get("sem_apelido"):
-                raise ErroLoja(f"{alvo.mention} desligou o apelido forçado (`/bloquear-apelido`).")
+                raise ErroLoja(f"{nome(g, alvo.id)} desligou o apelido forçado (`/bloquear-apelido`).")
             if any(p["tipo"] == "apelido" and p["user"] == str(alvo.id) for p in loja.servidor(g)["pendentes"]):
-                raise ErroLoja(f"{alvo.mention} já está com um apelido forçado.")
+                raise ErroLoja(f"{nome(g, alvo.id)} já está com um apelido forçado.")
             novo = limpar_texto(texto, 32)
             _checar_permissao(guild, manage_nicknames=True)
             antigo = alvo.nick
             await alvo.edit(nick=novo, reason=motivo)
             loja.agendar(g, "apelido", alvo.id, APELIDO_HORAS * 3600, antigo=antigo)
-            return f"{alvo.mention} agora se chama **{escape_markdown(novo)}** por {APELIDO_HORAS}h. 🤡"
+            return f"{nome(g, alvo.id)} agora se chama **{escape_markdown(novo)}** por {APELIDO_HORAS}h. 🤡"
         if i == "castigo":
             _checar_permissao(guild, moderate_members=True)
             await alvo.timeout(timedelta(minutes=minutos), reason=motivo)
             loja.marcar_imune(g, alvo.id, minutos)
-            return f"⛓️ {alvo.mention} está de castigo por {plural(minutos, 'minuto')}."
+            return f"⛓️ {nome(g, alvo.id)} está de castigo por {plural(minutos, 'minuto')}."
         if i in ("mutar", "surdo"):
             membro = _na_call(guild, alvo)
             if i == "mutar":
@@ -1231,15 +1238,15 @@ async def _executar_compra(interaction: discord.Interaction, i: str, alvo: disco
             loja.agendar(g, i, alvo.id, minutos * 60)
             loja.marcar_imune(g, alvo.id, minutos)
             acao = "mutado" if i == "mutar" else "surdo"
-            return f"{ITENS[i]['emoji']} {alvo.mention} está {acao} por {plural(minutos, 'minuto')}."
+            return f"{ITENS[i]['emoji']} {nome(g, alvo.id)} está {acao} por {plural(minutos, 'minuto')}."
         if i == "chutar":
             membro = _na_call(guild, alvo)
             _checar_permissao(guild, move_members=True)
             await membro.move_to(None, reason=motivo)
             loja.marcar_imune(g, alvo.id, 0)
-            return f"🦶 {alvo.mention} foi chutado da call."
+            return f"🦶 {nome(g, alvo.id)} foi chutado da call."
     except discord.Forbidden:
-        raise ErroLoja(f"O Discord não deixou o bot fazer isso com {alvo.mention} "
+        raise ErroLoja(f"O Discord não deixou o bot fazer isso com {nome(g, alvo.id)} "
                        "(ele é dono, admin ou tem cargo acima do bot).")
     except discord.HTTPException as e:
         raise ErroLoja(f"O Discord recusou ({e.status}). Tente de novo.")
@@ -1326,7 +1333,7 @@ async def sortear_rifa(g: str, canal):
     try:
         await canal.send(embed=discord.Embed(
             title="🎟️ Rifa da semana", color=CORES["ouro"],
-            description=f"{loja.enfeite(g, vencedor)}<@{vencedor}> ganhou o pote de **{numero(pote)}** moedas! "
+            description=f"{loja.enfeite(g, vencedor)}{nome(g, vencedor)} ganhou o pote de **{numero(pote)}** moedas! "
                         f"({plural(total, 'bilhete')} vendidos)"), allowed_mentions=SEM_MENCAO)
     except discord.HTTPException as e:
         log.warning("Não consegui postar a rifa: %s", e)
@@ -1404,11 +1411,11 @@ async def on_voice_state_update(membro: discord.Member, antes: discord.VoiceStat
 
 # ================================================================ sequências (tilt / on fire)
 AVISOS_SEQUENCIA = {
-    True: {5: "🔥 <@{u}> ganhou **{n} seguidas**! Está on fire.", 7: "🔥🔥 <@{u}> ganhou **{n} seguidas**! Alguém para essa pessoa.",
-           10: "☄️ <@{u}> ganhou **{n} seguidas**! Isso é smurf?", 15: "👑 <@{u}> ganhou **{n} seguidas**!!!"},
-    False: {4: "😬 <@{u}> perdeu **{n} seguidas**. Hora de um copo d'água?",
-            6: "🥶 <@{u}> perdeu **{n} seguidas**. Talvez seja melhor dar uma pausa...",
-            8: "💀 <@{u}> perdeu **{n} seguidas**. Desinstala?", 10: "🪦 <@{u}> perdeu **{n} seguidas**. F."},
+    True: {5: "🔥 {quem} ganhou **{n} seguidas**! Está on fire.", 7: "🔥🔥 {quem} ganhou **{n} seguidas**! Alguém para essa pessoa.",
+           10: "☄️ {quem} ganhou **{n} seguidas**! Isso é smurf?", 15: "👑 {quem} ganhou **{n} seguidas**!!!"},
+    False: {4: "😬 {quem} perdeu **{n} seguidas**. Hora de um copo d'água?",
+            6: "🥶 {quem} perdeu **{n} seguidas**. Talvez seja melhor dar uma pausa...",
+            8: "💀 {quem} perdeu **{n} seguidas**. Desinstala?", 10: "🪦 {quem} perdeu **{n} seguidas**. F."},
 }
 
 
@@ -1424,7 +1431,7 @@ def aviso_sequencia(g: str, u: str) -> str | None:
             break
         n += 1
     modelo = AVISOS_SEQUENCIA[bool(ultimo)].get(n)
-    return modelo.format(u=u, n=n) if modelo else None
+    return modelo.format(quem=nome(g, u), n=n) if modelo else None
 
 
 # ================================================================ duelos
@@ -1445,18 +1452,18 @@ def registrar_nota_duelo(g: str, u: str, nota: float, inicio: float) -> list[str
         d["notas"][u] = nota
         outro = d["para"] if u == d["de"] else d["de"]
         if outro not in d["notas"]:
-            linhas.append(f"<@{u}> tirou **{nota}** no duelo contra <@{outro}>. Agora é a vez de <@{outro}>!")
+            linhas.append(f"{nome(g, u)} tirou **{nota}** no duelo contra {nome(g, outro)}. Agora é a vez de {nome(g, outro)}!")
             continue
         duelos.pop(did)
         if d["notas"][u] == d["notas"][outro]:
             for x in (u, outro):
                 store.carteira(g, x)["saldo"] += d["valor"]
-            linhas.append(f"🤝 Duelo <@{u}> x <@{outro}> empatou (nota {nota}). As moedas voltaram.")
+            linhas.append(f"🤝 Duelo {nome(g, u)} x {nome(g, outro)} empatou (nota {nota}). As moedas voltaram.")
             continue
         venc, perd = sorted((u, outro), key=lambda x: d["notas"][x], reverse=True)
         store.carteira(g, venc)["saldo"] += d["valor"] * 2
-        linhas.append(f"🏆 {loja.enfeite(g, venc)}<@{venc}> (nota **{d['notas'][venc]}**) venceu o duelo contra "
-                      f"<@{perd}> (nota {d['notas'][perd]}) e levou **{numero(d['valor'] * 2)}** moedas!")
+        linhas.append(f"🏆 {loja.enfeite(g, venc)}{nome(g, venc)} (nota **{d['notas'][venc]}**) venceu o duelo contra "
+                      f"{nome(g, perd)} (nota {d['notas'][perd]}) e levou **{numero(d['valor'] * 2)}** moedas!")
     return linhas
 
 
@@ -1489,11 +1496,11 @@ class BotaoDuelo(discord.ui.DynamicItem[discord.ui.Button],
             store.salvar()
             acao = "recusou" if uid == d["para"] else "cancelou"
             await interaction.response.edit_message(
-                content=f"✖️ <@{uid}> {acao} o duelo. As moedas voltaram para <@{d['de']}>.",
+                content=f"✖️ {nome(self.g, uid)} {acao} o duelo. As moedas voltaram para {nome(self.g, d['de'])}.",
                 embed=None, view=None, allowed_mentions=SEM_MENCAO)
             return
         if uid != d["para"]:
-            await interaction.response.send_message(f"❌ Só <@{d['para']}> pode aceitar esse duelo.", ephemeral=True)
+            await interaction.response.send_message(f"❌ Só {nome(self.g, d['para'])} pode aceitar esse duelo.", ephemeral=True)
             return
         if duelo_ativo(self.g, uid, exceto=self.did):
             await interaction.response.send_message("❌ Você já está em outro duelo.", ephemeral=True)
@@ -1528,9 +1535,9 @@ async def cmd_duelo(interaction: discord.Interaction, amigo: discord.Member,
     vinculos = store.de("vinculos", g)
     for x in (eu, ele):
         if x not in vinculos:
-            raise RiotErro(f"<@{x}> precisa usar `/vincular` antes de duelar.")
+            raise RiotErro(f"{nome(g, x)} precisa usar `/vincular` antes de duelar.")
         if duelo_ativo(g, x):
-            raise RiotErro(f"<@{x}> já está em um duelo. Um de cada vez!")
+            raise RiotErro(f"{nome(g, x)} já está em um duelo. Um de cada vez!")
     carteira = store.carteira(g, eu)
     if carteira["saldo"] < moedas:
         raise RiotErro(f"Você tem só **{numero(carteira['saldo'])}** moedas.")
@@ -1540,7 +1547,7 @@ async def cmd_duelo(interaction: discord.Interaction, amigo: discord.Member,
                                   "criado": time.time(), "notas": {}}
     store.salvar()
     embed = discord.Embed(title="⚔️ Duelo de nota!", color=CORES["aviso"], description=(
-        f"{interaction.user.mention} desafiou {amigo.mention} valendo **{numero(moedas)}** moedas de cada um.\n"
+        f"{nome(g, eu)} desafiou {nome(g, ele)} valendo **{numero(moedas)}** moedas de cada um.\n"
         f"Quem tirar a **maior nota** na próxima partida leva **{numero(moedas * 2)}**.\n"
         f"O convite vale até <t:{int(time.time() + DUELO_ACEITAR_MIN * 60)}:t>."))
     view = discord.ui.View(timeout=None)
@@ -1556,11 +1563,11 @@ async def expirar_duelos():
         for did, d in list(duelos.items()):
             if d["estado"] == "pendente" and agora - d["criado"] > DUELO_ACEITAR_MIN * 60:
                 store.carteira(g, d["de"])["saldo"] += d["valor"]
-                texto = f"⌛ <@{d['para']}> não respondeu o duelo de <@{d['de']}>. As moedas voltaram."
+                texto = f"⌛ {nome(g, d['para'])} não respondeu o duelo de {nome(g, d['de'])}. As moedas voltaram."
             elif d["estado"] == "aceito" and agora - d["aceito_em"] > DUELO_HORAS * 3600:
                 for x in (d["de"], d["para"]):
                     store.carteira(g, x)["saldo"] += d["valor"]
-                texto = f"⌛ O duelo de <@{d['de']}> e <@{d['para']}> passou de {DUELO_HORAS}h sem as duas partidas. As moedas voltaram."
+                texto = f"⌛ O duelo de {nome(g, d['de'])} e {nome(g, d['para'])} passou de {DUELO_HORAS}h sem as duas partidas. As moedas voltaram."
             else:
                 continue
             duelos.pop(did)
@@ -1596,14 +1603,14 @@ async def cmd_duplas(interaction: discord.Interaction):
             "Ainda não tenho partidas de amigos jogando juntos. Elas são registradas quando os alertas estão ligados.")
         return
     lista = sorted(duplas.items(), key=lambda kv: (kv[1][0], kv[1][1]), reverse=True)
-    linhas = [f"<@{a}> + <@{b}> — {plural(j, 'jogo')} · **{round(v / j * 100)}%** de vitórias"
+    linhas = [f"{nome(g, a)} + {nome(g, b)} — {plural(j, 'jogo')} · **{round(v / j * 100)}%** de vitórias"
               for (a, b), (j, v) in lista[:12]]
     elegiveis = [kv for kv in lista if kv[1][0] >= 3]
     if len(elegiveis) >= 2:
         (a, b), (j, v) = max(elegiveis, key=lambda kv: kv[1][1] / kv[1][0])
-        linhas.append(f"\n💞 **Dupla dos sonhos:** <@{a}> + <@{b}> ({round(v / j * 100)}% em {j})")
+        linhas.append(f"\n💞 **Dupla dos sonhos:** {nome(g, a)} + {nome(g, b)} ({round(v / j * 100)}% em {j})")
         (a, b), (j, v) = min(elegiveis, key=lambda kv: kv[1][1] / kv[1][0])
-        linhas.append(f"💔 **Dupla do caos:** <@{a}> + <@{b}> ({round(v / j * 100)}% em {j})")
+        linhas.append(f"💔 **Dupla do caos:** {nome(g, a)} + {nome(g, b)} ({round(v / j * 100)}% em {j})")
     embed = discord.Embed(title="👯 Duplas do servidor", description="\n".join(linhas)[:4000], color=CORES["info"])
     embed.set_footer(text="Partidas dos últimos 35 dias registradas pelos alertas")
     await interaction.response.send_message(embed=embed, allowed_mentions=SEM_MENCAO)
