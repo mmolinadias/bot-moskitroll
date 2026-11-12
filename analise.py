@@ -105,7 +105,8 @@ def calcular_notas(info: dict) -> dict[str, dict]:
     """
     Dá uma nota de 0 a 10 para cada jogador comparando com os outros 9:
     KDA, participação em abates, dano a campeões, ouro e placar de visão.
-    MVP = maior nota do time vencedor; ACE = maior nota do time perdedor.
+    MVP = maior nota do time vencedor; ACE = maior nota do time perdedor;
+    NTP = menor nota da partida (o inverso do MVP).
     """
     ps = info.get("participants", [])
     if not ps:
@@ -137,7 +138,7 @@ def calcular_notas(info: dict) -> dict[str, dict]:
             percentis.append((menores + 0.5 * iguais) / max(n - 1, 1))
         base = sum(percentis) / len(percentis)
         nota = 2 + 7.5 * base + (0.5 if p.get("win") else 0)
-        notas[p["puuid"]] = {"nota": round(max(0, min(10, nota)), 1), "mvp": False, "ace": False}
+        notas[p["puuid"]] = {"nota": round(max(0, min(10, nota)), 1), "mvp": False, "ace": False, "ntp": False}
 
     vencedores = [p for p in ps if p.get("win")]
     perdedores = [p for p in ps if not p.get("win")]
@@ -145,6 +146,7 @@ def calcular_notas(info: dict) -> dict[str, dict]:
         notas[max(vencedores, key=lambda p: notas[p["puuid"]]["nota"])["puuid"]]["mvp"] = True
     if perdedores:
         notas[max(perdedores, key=lambda p: notas[p["puuid"]]["nota"])["puuid"]]["ace"] = True
+    notas[min(ps, key=lambda p: notas[p["puuid"]]["nota"])["puuid"]]["ntp"] = True
     return notas
 
 

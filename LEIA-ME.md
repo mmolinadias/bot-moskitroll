@@ -62,6 +62,7 @@ Para guardar uma cópia dos dados, use o botão **Backup** na página do bot na 
 | `/vincular Nome#TAG` / `/desvincular` | Liga ou desliga a sua conta |
 | `/ranking [fila]` | Ranking Solo/Duo e Flex do servidor |
 | `/semana` | Resumo dos últimos 7 dias |
+| `/mvp` | Contador de MVP e NTP (pior nota da partida) da semana |
 | `/duplas` | Quais amigos ganham mais jogando juntos |
 | `/duelo @amigo moedas` | Quem tirar a maior nota na próxima partida leva as moedas |
 | `/carteira [membro]` / `/diario` / `/top-moedas` | Moedas das apostas |

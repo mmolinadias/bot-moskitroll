@@ -708,6 +708,8 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
         resultados.append(eu.get("win"))
         nota = notas.get(eu["puuid"], {})
         selo = " 🏆 **MVP**" if nota.get("mvp") else (" 🎖️ **ACE**" if nota.get("ace") else "")
+        if nota.get("ntp"):
+            selo += " 🤡 **NTP**"
         cs = eu.get("totalMinionsKilled", 0) + eu.get("neutralMinionsKilled", 0)
         dano = eu.get("totalDamageDealtToChampions", 0)
         pct_dano = round(dano / max(dano_time[eu["teamId"]], 1) * 100)
@@ -741,7 +743,7 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
         embed.add_field(name=f"{res} · {j['riot_id']}", value="\n".join(linhas)[:1024], inline=False)
         store.historico(g).append({
             "user": u, "ts": time.time(), "campeao": champ, "vitoria": bool(eu.get("win")),
-            "k": k, "d": d, "a": a, "nota": nota.get("nota", 0), "mvp": bool(nota.get("mvp")),
+            "k": k, "d": d, "a": a, "nota": nota.get("nota", 0), "mvp": bool(nota.get("mvp")), "ntp": bool(nota.get("ntp")),
             "pdl": pdl, "fila": fila, "remake": remake, "penta": bool(eu.get("pentaKills")),
             "jogo": info.get("gameId"), "time": eu.get("teamId")})
         if not remake:
@@ -932,6 +934,39 @@ async def cmd_semana(interaction: discord.Interaction):
         return
     embed.description = embed.description.replace(" (+500 moedas)", "")
     embed.title = "📅 Últimos 7 dias"
+    await interaction.response.send_message(embed=embed, allowed_mentions=SEM_MENCAO)
+
+
+@bot.tree.command(name="mvp", description="Quantas vezes cada um foi MVP e NTP nos últimos 7 dias")
+@app_commands.guild_only()
+async def cmd_mvp(interaction: discord.Interaction):
+    g = str(interaction.guild.id)
+    limite = time.time() - 7 * 86400
+    hist = [e for e in store.historico(g) if e["ts"] >= limite and not e.get("remake")]
+    mvps, ntps, jogos = defaultdict(int), defaultdict(int), defaultdict(int)
+    for e in hist:
+        jogos[e["user"]] += 1
+        mvps[e["user"]] += 1 if e.get("mvp") else 0
+        ntps[e["user"]] += 1 if e.get("ntp") else 0
+    if not hist:
+        await interaction.response.send_message(
+            "Ainda não tenho partidas registradas nesta semana. As partidas são registradas quando "
+            "os alertas estão ligados (`/config-alertas`).", ephemeral=True)
+        return
+    medalhas = ["🥇", "🥈", "🥉"]
+
+    def tabela(contagem):
+        lista = sorted((u for u in contagem if contagem[u]), key=lambda u: (-contagem[u], jogos[u]))
+        if not lista:
+            return "Ninguém ainda."
+        return "\n".join(f"{medalhas[i] if i < 3 else f'`{i + 1}.`'} {loja.enfeite(g, u)}{nome(g, u)} — "
+                         f"**{contagem[u]}x** em {plural(jogos[u], 'partida')}"
+                         for i, u in enumerate(lista[:10]))
+
+    embed = discord.Embed(title="🏆 MVP e 🤡 NTP da semana", color=CORES["ouro"])
+    embed.add_field(name="🏆 MVP (melhor nota do time que venceu)", value=tabela(mvps)[:1024], inline=False)
+    embed.add_field(name="🤡 NTP (pior nota da partida)", value=tabela(ntps)[:1024], inline=False)
+    embed.set_footer(text=f"Últimos 7 dias · {plural(len(hist), 'partida')} registradas")
     await interaction.response.send_message(embed=embed, allowed_mentions=SEM_MENCAO)
 
 
@@ -1857,6 +1892,7 @@ async def cmd_ajuda(interaction: discord.Interaction):
         "`/vincular Nome#TAG` — liga sua conta\n"
         "`/ranking` — ranking de elo (Solo/Duo e Flex)\n"
         "`/semana` — resumo dos últimos 7 dias\n"
+        "`/mvp` — quantas vezes cada um foi MVP e NTP na semana\n"
         "`/duplas` — quem ganha mais jogando junto\n"
         "`/config-alertas #canal` — avisos, resumos e apostas (admin)"))
     embed.add_field(name="💰 Apostas (moedas fictícias)", inline=False, value=(

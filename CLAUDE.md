@@ -16,7 +16,7 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 - `riot.py` — `RiotAPI`: requisições com `Limitador` (20/s e 100/2min), Data Dragon pt_BR
   (nomes de campeões; itens e feitiços só quando usam o /ultimate-bravery), cache de imagens em `cache/` (até 100 na memória).
 - `analise.py` — textos de elo, `pontuacao_elo` (100 pts = 1 divisão), nota 0–10 por percentil
-  (KDA, participação, dano, ouro, visão), MVP/ACE, odds das apostas.
+  (KDA, participação, dano, ouro, visão), MVP/ACE/NTP (NTP = menor nota dos 10), odds das apostas.
 - `imagens.py` — Pillow: cartão de `/perfil`.
 - `coleta.py` — `/build`: coleta própria de partidas Solo/Duo (420) e Flex (440) de jogadores Mestre+ de
   KR, EUW e BR (League-V4 + Match-V5 + timeline). Guarda só contadores em `builds.json` (2 patches mais novos,
@@ -36,7 +36,7 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 ## Comandos
 `/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores), `/build campeão [rota] [modo]` (coleta própria Mestre+, modo Solo/Duo ou Flex; mínimo 20 partidas, usa o patch anterior se o atual tiver pouco), `/ultimate-bravery [mapa]` (sorteio; itens/feitiços baixados no 1º uso, IDs < 10000),
 `/vincular`, `/desvincular`, `/ranking [fila]` (Solo/Duo e Flex),
-`/semana`, `/duplas`, `/duelo`, `/tierlist`, `/counter`, `/comparar`, `/carteira`, `/diario`, `/top-moedas`, `/loja`, `/comprar`, `/bloquear-apelido`, `/config-loja`, `/config-alertas`, `/desativar-alertas`, `/ajuda`.
+`/semana`, `/mvp` (contagem de MVP e NTP dos últimos 7 dias; histórico grava `ntp`), `/duplas`, `/duelo`, `/tierlist`, `/counter`, `/comparar`, `/carteira`, `/diario`, `/top-moedas`, `/loja`, `/comprar`, `/bloquear-apelido`, `/config-loja`, `/config-alertas`, `/desativar-alertas`, `/ajuda`.
 
 ## Fluxo dos alertas (`loop_partidas`, a cada `INTERVALO_ALERTA_MIN`)
 1. Para cada servidor com canal de alertas, checa o Spectator-V5 de cada membro vinculado.

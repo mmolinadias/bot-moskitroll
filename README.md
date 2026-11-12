@@ -47,6 +47,7 @@ Elo, histórico, raio-X da partida ao vivo, resumo pós-jogo com nota de 0 a 10,
 | `/vincular Nome#TAG` · `/desvincular` | Liga ou desliga a sua conta |
 | `/ranking [fila]` | Ranking Solo/Duo e Flex do servidor |
 | `/semana` | Resumo dos últimos 7 dias |
+| `/mvp` | Contador de MVP e NTP (pior nota da partida) da semana |
 | `/duplas` | Quais amigos ganham mais jogando juntos |
 | `/duelo @amigo moedas` | Quem tirar a maior nota na próxima partida leva as moedas |
 | `/carteira` · `/diario` · `/top-moedas` | Moedas das apostas |
