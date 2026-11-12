@@ -299,6 +299,9 @@ class RiotAPI:
         except NaoEncontrado:
             raise RiotErro(f"Essa conta não tem perfil de LoL no servidor `{config.PLATFORM}`.")
 
+    async def status_servidor(self) -> dict:
+        return await self._get(f"{self.base_plat}/lol/status/v4/platform-data")
+
     async def elo(self, puuid: str) -> list[dict]:
         return await self._get(f"{self.base_plat}/lol/league/v4/entries/by-puuid/{puuid}")
 

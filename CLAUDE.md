@@ -23,6 +23,8 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
   combinações raras cortadas, até 300 mil ids de partidas vistas). KR/EUW têm `Limitador` próprio (o limite da
   Riot é por região); BR usa o limitador principal e só até 50% dos 100/2min, para sobrar para os alertas.
   Ritmo: `COLETA_PARTIDAS_HORA` por região (padrão 120; ~85 KB por partida). O OP.GG foi removido (2026-11-11).
+  Também conta confrontos (`contra`: campeão inimigo da mesma rota) para o `/counter`, faz a `/tierlist`
+  (winrate ajustada: (v+25)/(j+50)) e chama `ao_patch_novo` quando aparece um patch mais novo.
 - `loja.py` — catálogo (`ITENS`) e regras da loja (`DadosLoja`: enfeite 👑/emoji, seguro/odd turbinada nas
   apostas, rifa, desafio Bravery, escudo, imunidade de 10 min, `pendentes` para desmutar/devolver apelido).
   Os comandos `/loja`, `/comprar`, `/bloquear-apelido`, `/config-loja`, o `loop_loja` (20 s) e o
@@ -34,7 +36,7 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 ## Comandos
 `/elo`, `/historico`, `/maestria`, `/perfil` (imagem), `/aovivo` (raio-X dos 10 jogadores), `/build campeão [rota] [modo]` (coleta própria Mestre+, modo Solo/Duo ou Flex; mínimo 20 partidas, usa o patch anterior se o atual tiver pouco), `/ultimate-bravery [mapa]` (sorteio; itens/feitiços baixados no 1º uso, IDs < 10000),
 `/vincular`, `/desvincular`, `/ranking [fila]` (Solo/Duo e Flex),
-`/semana`, `/carteira`, `/diario`, `/top-moedas`, `/loja`, `/comprar`, `/bloquear-apelido`, `/config-loja`, `/config-alertas`, `/desativar-alertas`, `/ajuda`.
+`/semana`, `/duplas`, `/duelo`, `/tierlist`, `/counter`, `/comparar`, `/carteira`, `/diario`, `/top-moedas`, `/loja`, `/comprar`, `/bloquear-apelido`, `/config-loja`, `/config-alertas`, `/desativar-alertas`, `/ajuda`.
 
 ## Fluxo dos alertas (`loop_partidas`, a cada `INTERVALO_ALERTA_MIN`)
 1. Para cada servidor com canal de alertas, checa o Spectator-V5 de cada membro vinculado.
@@ -43,7 +45,10 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 3. Partida sumiu do spectator → vai para `pendentes`; busca `BR1_{gameId}` no Match-V5, espera a
    Riot atualizar o PDL (até 3 tentativas), posta o resumo (nota, MVP, PDL, pentakill), paga as
    apostas (remake devolve), dá moedas (+50 vitória, +100 MVP/ACE) e grava no histórico.
-4. `loop_semanal`: domingo 20h (configurável) posta o resumo da semana; MVP ganha +500 moedas.
+4. `loop_semanal`: domingo 20h (configurável) posta o resumo da semana; MVP ganha +500 moedas; sorteia a rifa.
+5. O resumo pós-partida também registra notas dos duelos (`duelos` no dados.json; expiram no `loop_loja`) e
+   avisa sequências (`aviso_sequencia`). O histórico agora guarda `jogo` e `time` (usados no `/duplas`).
+6. `loop_status` (10 min): LoL-Status-V4 do BR; avisa início/fim de manutenções e incidentes (`geral.status_ativos`).
 
 ## Estado e limitações conhecidas
 - Testado só com dados simulados (o ambiente onde foi escrito não acessava a Riot). Bugs reais

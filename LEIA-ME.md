@@ -55,10 +55,15 @@ Para guardar uma cópia dos dados, use o botão **Backup** na página do bot na 
 | `/maestria [Nome#TAG] [quantidade]` | Campeões com mais maestria |
 | `/aovivo [Nome#TAG]` | Raio-X da partida atual |
 | `/build campeão [rota] [modo]` | Build mais usada do campeão por jogadores Mestre+ de KR, EUW e BR (Solo/Duo ou Flex) |
+| `/tierlist rota [modo]` | Campeões mais fortes da rota no Mestre+ |
+| `/counter campeão [rota] [modo]` | Contra quem o campeão mais ganha e perde no Mestre+ |
+| `/comparar Nome#TAG [Nome#TAG]` | Dois jogadores lado a lado (elo e últimas 5 partidas) |
 | `/ultimate-bravery [mapa]` | Sorteia campeão, 6 itens e 2 feitiços (Summoner's Rift ou ARAM) |
 | `/vincular Nome#TAG` / `/desvincular` | Liga ou desliga a sua conta |
 | `/ranking [fila]` | Ranking Solo/Duo e Flex do servidor |
 | `/semana` | Resumo dos últimos 7 dias |
+| `/duplas` | Quais amigos ganham mais jogando juntos |
+| `/duelo @amigo moedas` | Quem tirar a maior nota na próxima partida leva as moedas |
 | `/carteira [membro]` / `/diario` / `/top-moedas` | Moedas das apostas |
 | `/loja` / `/comprar item` | Itens à venda e compra |
 | `/bloquear-apelido` | Não deixa ninguém comprar apelido forçado para você |
@@ -95,6 +100,10 @@ Para a loja funcionar, o cargo do bot precisa destas permissões, e precisa esta
 **Gerenciar Cargos** (cargo colorido), **Gerenciar Apelidos** (apelido forçado), **Castigar Membros** (castigo), **Silenciar Membros** (mutar), **Ensurdecer Membros** (ensurdecer) e **Mover Membros** (chutar da call).
 
 ## Como funcionam algumas coisas
+- **Duelo:** quem desafia já paga na hora; o amigo tem 30 minutos para aceitar (senão as moedas voltam). Depois de aceito, vale a próxima partida de cada um que começar depois do aceite, por até 48h. Maior nota leva tudo, empate devolve. Uma pessoa só pode estar em um duelo por vez.
+- **Sequências:** o resumo pós-partida avisa quando alguém chega em 5, 7, 10 ou 15 vitórias seguidas, ou 4, 6, 8 ou 10 derrotas seguidas (remakes não contam).
+- **Avisos automáticos:** o bot olha o status oficial do servidor BR a cada 10 minutos e avisa no canal dos alertas quando começa e quando termina uma manutenção ou problema. Quando a coleta de builds vê partidas de um patch novo, posta o aviso do patch.
+- **`/tierlist` e `/counter`:** usam as partidas da coleta de builds. Os confrontos do `/counter` precisam de 1 ou 2 dias de coleta para aparecer.
 - **Builds (`/build`):** o bot junta sozinho partidas de jogadores Mestre+ do KR, EUW e BR e soma runas, feitiços, itens e ordem das habilidades. Logo que liga pela primeira vez, leva algumas horas até ter partidas suficientes. Gasta cerca de 0,7 GB de internet por dia (dá para diminuir com `COLETA_PARTIDAS_HORA` no `.env`) e respeita o limite da chave da Riot. Na Discloud grátis, desligue com `COLETA_BUILDS=nao`.
 - **Nota de 0 a 10:** compara cada jogador com os outros 9 em KDA, participação em abates, dano, ouro e visão. O vencedor ganha um pequeno bônus.
 - **Apostas:** ficam abertas por 8 minutos depois do aviso. Quem está jogando só pode apostar no próprio time. Se for remake, o dinheiro volta. As moedas não valem nada de verdade.

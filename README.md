@@ -21,11 +21,13 @@ Elo, histórico, raio-X da partida ao vivo, resumo pós-jogo com nota de 0 a 10,
 |---|---|
 | 🖼️ **Perfil em imagem** | `/perfil` gera um cartão com ícone, elo de Solo/Duo e Flex, campeões favoritos e as últimas 10 partidas. |
 | 🔴 **Alertas de partida** | Quando alguém do grupo entra em partida, o bot avisa no canal com o raio-X dos 10 jogadores (elo, winrate e maestria) e diz qual time é favorito. |
-| 📊 **Resumo pós-jogo** | KDA, dano, participação, CS, visão, **nota de 0 a 10**, **MVP/ACE**, PDL ganho ou perdido, subida de elo e pentakill. |
+| 📊 **Resumo pós-jogo** | KDA, dano, participação, CS, visão, **nota de 0 a 10**, **MVP/ACE**, PDL ganho ou perdido, subida de elo, pentakill e avisos de sequência (on fire 🔥 ou tilt 😬). |
 | 💰 **Apostas fictícias** | Aposte no time azul ou vermelho com moedas que não valem nada de verdade. As odds dependem do elo dos times. |
 | 🛒 **Loja** | Gaste as moedas com título e fundo no perfil, coroa, cargo colorido, seguro de aposta, rifa... ou castigando, mutando e chutando os amigos da call. |
 | 🏆 **Ranking e semana** | Ranking de Solo/Duo e Flex do servidor e, todo domingo, o resumo da semana: MVP, quem mais subiu, quem mais morreu, pé frio... |
-| 🛠️ **Builds Mestre+** | `/build` mostra runas, feitiços, itens e ordem das habilidades mais usados por jogadores **Mestre+ do KR, EUW e BR**. |
+| 🛠️ **Builds Mestre+** | `/build` mostra runas, feitiços, itens e ordem das habilidades mais usados por jogadores **Mestre+ do KR, EUW e BR**, com `/tierlist` e `/counter` dos mesmos dados. |
+| ⚔️ **Duelos e duplas** | `/duelo` aposta moedas em quem tira a maior nota na próxima partida; `/duplas` mostra quem ganha mais jogando junto; `/comparar` coloca dois jogadores lado a lado. |
+| 🚨 **Avisos automáticos** | Manutenção ou problema no servidor BR (status oficial da Riot) e patch novo no ar. |
 | 🎲 **Ultimate Bravery** | Sorteia campeão, 6 itens e 2 feitiços, no Summoner's Rift ou no ARAM. |
 
 ## 💬 Comandos
@@ -38,10 +40,15 @@ Elo, histórico, raio-X da partida ao vivo, resumo pós-jogo com nota de 0 a 10,
 | `/maestria [Nome#TAG] [quantidade]` | Campeões com mais maestria |
 | `/aovivo [Nome#TAG]` | Raio-X da partida atual |
 | `/build campeão [rota] [modo]` | Build mais usada no Mestre+ (Solo/Duo ou Flex) |
+| `/tierlist rota [modo]` | Campeões mais fortes da rota no Mestre+ |
+| `/counter campeão [rota] [modo]` | Contra quem o campeão mais ganha e perde no Mestre+ |
+| `/comparar Nome#TAG [Nome#TAG]` | Dois jogadores lado a lado (elo e últimas 5 partidas) |
 | `/ultimate-bravery [mapa]` | Sorteio de campeão, itens e feitiços |
 | `/vincular Nome#TAG` · `/desvincular` | Liga ou desliga a sua conta |
 | `/ranking [fila]` | Ranking Solo/Duo e Flex do servidor |
 | `/semana` | Resumo dos últimos 7 dias |
+| `/duplas` | Quais amigos ganham mais jogando juntos |
+| `/duelo @amigo moedas` | Quem tirar a maior nota na próxima partida leva as moedas |
 | `/carteira` · `/diario` · `/top-moedas` | Moedas das apostas |
 | `/loja` · `/comprar item` | Itens à venda e compra |
 | `/bloquear-apelido` | Não deixa ninguém comprar apelido forçado para você |

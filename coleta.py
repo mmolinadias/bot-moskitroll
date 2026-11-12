@@ -40,6 +40,7 @@ ROTAS = {"TOP": "Topo", "JUNGLE": "Selva", "MIDDLE": "Meio", "BOTTOM": "Atirador
 DURACAO_MINIMA = 15 * 60       # ignora remakes e rendições muito cedo
 INICIAIS_ATE_MS = 90_000       # compras até 1:30 contam como itens iniciais
 MINIMO_JOGOS = 20              # menos que isso não mostra build
+MINIMO_CONFRONTO = 8          # partidas contra um campeão para entrar no /counter
 MAX_VISTAS = 300_000           # partidas já contadas (para não contar duas vezes)
 ATUALIZAR_JOGADORES_H = 6
 SALVAR_MIN = 5
@@ -86,6 +87,7 @@ class Coleta:
         self._versao_itens = ""
         self._mudou = False
         self._tarefas: list[asyncio.Task] = []
+        self.ao_patch_novo = None  # função async(patch) chamada quando aparece um patch mais novo
 
     # ------------------------------------------------------------ arquivo
     def _carregar(self):
@@ -121,6 +123,9 @@ class Coleta:
                         if len(d) > 60:
                             manter = sorted(d.items(), key=lambda kv: kv[1][0], reverse=True)[:30]
                             c[nome] = dict(manter)
+                    contra = c.get("contra", {})
+                    if len(contra) > 120:  # confrontos: guarda os 80 mais comuns
+                        c["contra"] = dict(sorted(contra.items(), key=lambda kv: kv[1][0], reverse=True)[:80])
 
     # ------------------------------------------------------------ ciclo de vida
     def iniciar(self):
@@ -311,7 +316,10 @@ class Coleta:
         if patch not in patches:
             if not self._patch_aceito(patch):
                 return None
+            anteriores = list(patches)
             patches[patch] = {"filas": {}, "partidas": {}}
+            if anteriores and _ordem_patch(patch) > max(_ordem_patch(x) for x in anteriores) and self.ao_patch_novo:
+                asyncio.get_running_loop().create_task(self.ao_patch_novo(patch))
             for velho in sorted(patches, key=_ordem_patch)[:-2]:
                 del patches[velho]
                 log.info("Patch %s saiu das builds", velho)
@@ -346,6 +354,7 @@ class Coleta:
                 elif tipo == "SKILL_LEVEL_UP" and ev.get("levelUpType") == "NORMAL":
                     habilidades.setdefault(pid, []).append(ev.get("skillSlot", 0))
 
+        oponentes = {(p.get("teamId"), p.get("teamPosition")): p["championId"] for p in info["participants"]}
         for p in info["participants"]:
             rota = p.get("teamPosition")
             if rota not in ROTAS:
@@ -356,6 +365,9 @@ class Coleta:
                 "core": {}, "opcoes": {}, "ordem": {}, "inicio": {}})
             c["jogos"] += 1
             c["vitorias"] += v
+            inimigo = oponentes.get((300 - p.get("teamId", 0), rota))  # times são 100 e 200
+            if inimigo:
+                _somar(c.setdefault("contra", {}), str(inimigo), v)
 
             estilos = (p.get("perks") or {}).get("styles") or []
             if len(estilos) == 2:
@@ -467,3 +479,61 @@ class Coleta:
             "ordem": list(ordem) if ordem else [],
             "inicio": list(inicio) if inicio else [],
         }
+
+    def _patch_principal(self, fila: int) -> str | None:
+        """O patch mais novo que já tem partidas suficientes (senão, o que tiver mais)."""
+        patches = sorted(self.dados["patches"], key=_ordem_patch, reverse=True)
+        total = {pt: sum(self.dados["patches"][pt]["partidas"].get(str(fila), {}).values()) for pt in patches}
+        for pt in patches:
+            if total[pt] >= 1000:
+                return pt
+        return max(patches, key=lambda pt: total[pt]) if patches and any(total.values()) else None
+
+    def tierlist(self, rota: str, fila: int) -> dict:
+        """Campeões da rota com a taxa de vitória ajustada (puxada para 50% quando há poucas partidas)."""
+        patch = self._patch_principal(fila)
+        if not patch:
+            raise RiotErro("Ainda estou juntando partidas do alto elo. Tente de novo daqui a algumas horas.")
+        partidas = sum(self.dados["patches"][patch]["partidas"].get(str(fila), {}).values())
+        por_fila = self.dados["patches"][patch]["filas"].get(str(fila), {})
+        minimo = max(MINIMO_JOGOS, int(partidas * 0.005))
+        lista = []
+        for chave, c in por_fila.items():
+            champ, r = chave.split(":")
+            if r != rota or c["jogos"] < minimo:
+                continue
+            ajustada = (c["vitorias"] + 25) / (c["jogos"] + 50)
+            lista.append({"campeao": int(champ), "winrate": c["vitorias"] / c["jogos"], "ajustada": ajustada,
+                          "jogos": c["jogos"], "pickrate": c["jogos"] / partidas})
+        if len(lista) < 5:
+            raise RiotErro(f"Ainda não tenho partidas suficientes de {ROTAS[rota]} no {NOMES_FILAS[fila]} Mestre+.")
+        lista.sort(key=lambda x: x["ajustada"], reverse=True)
+        return {"patch": patch, "partidas": partidas, "campeoes": lista}
+
+    def counters(self, champ: int, rota: str | None, fila: int) -> dict:
+        """Contra quem o campeão mais ganha e perde na rota (somando os 2 patches guardados)."""
+        nome = self.riot.nome_campeao(champ)
+        jogos_rota: Counter = Counter()
+        contra: dict[str, list] = {}
+        for patch in self.dados["patches"].values():
+            por_fila = patch["filas"].get(str(fila), {})
+            for r in ROTAS:
+                c = por_fila.get(f"{champ}:{r}")
+                if c:
+                    jogos_rota[r] += c["jogos"]
+        if not jogos_rota:
+            raise RiotErro(f"Ainda não tenho partidas de **{nome}** no {NOMES_FILAS[fila]} Mestre+.")
+        r = rota or jogos_rota.most_common(1)[0][0]
+        for patch in self.dados["patches"].values():
+            c = patch["filas"].get(str(fila), {}).get(f"{champ}:{r}")
+            for inimigo, (j, v) in (c or {}).get("contra", {}).items():
+                soma = contra.setdefault(inimigo, [0, 0])
+                soma[0] += j
+                soma[1] += v
+        lista = [{"campeao": int(i), "jogos": j, "winrate": v / j} for i, (j, v) in contra.items()
+                 if j >= MINIMO_CONFRONTO]
+        if len(lista) < 4:
+            raise RiotErro(f"Ainda não tenho confrontos suficientes de **{nome}** ({ROTAS[r]}). "
+                           "Os confrontos começam a ser contados agora; tente de novo daqui a um ou dois dias.")
+        lista.sort(key=lambda x: x["winrate"], reverse=True)
+        return {"rota": r, "jogos": jogos_rota[r], "confrontos": lista}

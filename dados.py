@@ -16,6 +16,8 @@ CHAVES = {
     "historico": {},       # {guild: [ {...}, ... ]}
     "moedas": {},          # {guild: {user: {"saldo", "diario"}}}
     "resumo_semanal": {},  # {guild: "2026-W45"}
+    "duelos": {},          # {guild: {id: {"de", "para", "valor", "estado", "notas", ...}}}
+    "geral": {},           # patch anunciado, avisos de status do servidor
     "loja": {},            # {guild: {"usuarios", "rifa", "desafios", "pendentes", "config"}}
 }
 
