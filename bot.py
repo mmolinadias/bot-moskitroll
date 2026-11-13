@@ -526,10 +526,45 @@ class BotaoAposta(discord.ui.DynamicItem[discord.ui.Button],
         await interaction.response.send_modal(ModalAposta(self.g, self.jogo, self.time_id, saldo))
 
 
+async def autocompletar_vinculado(interaction: discord.Interaction, atual: str):
+    """Lista todo mundo do servidor que usou /vincular (menos quem está comprando)."""
+    atual = atual.strip().lower()
+    opcoes = []
+    for u, v in store.de("vinculos", interaction.guild.id).items():
+        if u == str(interaction.user.id):
+            continue
+        membro = interaction.guild.get_member(int(u))
+        rotulo = v.get("riot_id", u) + (f" ({membro.display_name})" if membro else "")
+        if not atual or atual in rotulo.lower():
+            opcoes.append(app_commands.Choice(name=rotulo[:100], value=u))
+    return sorted(opcoes, key=lambda c: c.name.lower())[:25]
+
+
+async def resolver_alvo(guild: discord.Guild, texto: str) -> discord.Member:
+    """Transforma o valor do campo alvo (id, menção ou Nome#TAG vinculado) no membro do servidor."""
+    texto = texto.strip().lstrip("<@!").rstrip(">")
+    if not texto.isdigit():
+        procura = texto.lower()
+        texto = next((u for u, v in store.de("vinculos", guild.id).items()
+                      if v.get("riot_id", "").lower() == procura
+                      or v.get("riot_id", "").lower().split("#")[0] == procura), "")
+    if not texto:
+        raise ErroLoja("Não achei esse amigo. Escolha um nome da lista do campo `alvo`.")
+    membro = guild.get_member(int(texto))
+    if membro is None:
+        try:
+            membro = await guild.fetch_member(int(texto))
+        except discord.HTTPException:
+            raise ErroLoja("Esse amigo não está mais no servidor.")
+    return membro
+
+
 @bot.tree.command(name="carteira", description="Mostra suas moedas (ou de outro membro)")
 @app_commands.guild_only()
-async def cmd_carteira(interaction: discord.Interaction, membro: discord.Member | None = None):
-    alvo = membro or interaction.user
+@app_commands.describe(membro="Amigo vinculado (vazio = você)")
+@app_commands.autocomplete(membro=autocompletar_vinculado)
+async def cmd_carteira(interaction: discord.Interaction, membro: str | None = None):
+    alvo = await resolver_alvo(interaction.guild, membro) if membro else interaction.user
     c = store.carteira(interaction.guild.id, alvo.id)
     abertas = sum(1 for p in store.de("partidas", interaction.guild.id).values() if str(alvo.id) in p["apostas"])
     store.salvar()
@@ -1365,22 +1400,23 @@ async def _executar_compra(interaction: discord.Interaction, i: str, alvo: disco
 @bot.tree.command(name="comprar", description="Compra um item da loja com suas moedas")
 @app_commands.guild_only()
 @app_commands.describe(item="O que comprar (veja os detalhes em /loja)",
-                       alvo="O amigo (desafio, apelido e castigos)",
+                       alvo="O amigo vinculado (desafio, apelido e castigos)",
                        texto="Texto do título, emoji, anúncio ou apelido",
                        campeao="Campeão do fundo do perfil", cor="Cor do cartão ou do cargo",
                        minutos="Duração do castigo, mute ou ensurdecer (padrão: 1)",
                        quantidade="Quantos (seguro, odd turbinada, escudo e rifa)")
-@app_commands.autocomplete(campeao=autocompletar_campeao)
+@app_commands.autocomplete(campeao=autocompletar_campeao, alvo=autocompletar_vinculado)
 @app_commands.choices(
     item=[app_commands.Choice(name=f"{it['emoji']} {it['nome']} — {texto_preco(i)}"[:100], value=i)
           for i, it in ITENS.items()],
     cor=[app_commands.Choice(name=nome, value=c) for c, (nome, _) in CORES_LOJA.items()],
     minutos=[app_commands.Choice(name=plural(m, "minuto"), value=m) for m in (1, 5, 10)])
 async def cmd_comprar(interaction: discord.Interaction, item: app_commands.Choice[str],
-                      alvo: discord.Member | None = None, texto: str | None = None, campeao: str | None = None,
+                      alvo: str | None = None, texto: str | None = None, campeao: str | None = None,
                       cor: app_commands.Choice[str] | None = None, minutos: app_commands.Choice[int] | None = None,
                       quantidade: app_commands.Range[int, 1, 50] = 1):
     g, i = str(interaction.guild.id), item.value
+    alvo = await resolver_alvo(interaction.guild, alvo) if alvo else None
     mins = minutos.value if minutos else 1
     qtd = quantidade if i in CONTAVEIS else 1
     custo = preco(i, mins, qtd)
@@ -1633,9 +1669,11 @@ class BotaoDuelo(discord.ui.DynamicItem[discord.ui.Button],
 
 @bot.tree.command(name="duelo", description="Desafia um amigo: quem tirar a maior nota na próxima partida leva as moedas")
 @app_commands.guild_only()
-@app_commands.describe(amigo="Quem você quer desafiar", moedas="Quanto cada um aposta")
-async def cmd_duelo(interaction: discord.Interaction, amigo: discord.Member,
+@app_commands.describe(amigo="Quem você quer desafiar (amigos vinculados)", moedas="Quanto cada um aposta")
+@app_commands.autocomplete(amigo=autocompletar_vinculado)
+async def cmd_duelo(interaction: discord.Interaction, amigo: str,
                     moedas: app_commands.Range[int, 50, 1_000_000]):
+    amigo = await resolver_alvo(interaction.guild, amigo)
     g, eu, ele = str(interaction.guild.id), str(interaction.user.id), str(amigo.id)
     if amigo.bot or ele == eu:
         raise RiotErro("Escolha um amigo (não vale você mesmo nem bots).")
