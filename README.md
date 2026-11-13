@@ -96,7 +96,7 @@ flowchart LR
     E --> F[Histórico para o<br>resumo da semana]
 ```
 
-- **Nota de 0 a 10:** compara cada jogador com os outros 9 da partida em KDA, participação em abates, dano, ouro e visão.
+- **Nota de 0 a 10:** compara cada jogador com os outros 9 da partida (KDA, participação, dano, ouro, visão, assistências, cura/escudo nos aliados e controle de grupo). Cada rota tem pesos próprios (no suporte valem mais visão, assistências, cura/escudo e controle; nas outras, dano e ouro) e é comparada com o que é normal para ela, então nenhuma função sai na frente só por ser quem é. O vencedor ganha meio ponto a mais.
 - **Moedas:** cada pessoa começa com 1.000. Quem joga ganha +50 por vitória e +100 se for MVP ou ACE. O MVP da semana ganha +500. Remake devolve as apostas.
 - **Builds:** o bot junta sozinho partidas ranqueadas de jogadores Mestre, Grão-Mestre e Desafiante do KR, EUW e BR e guarda só os totais (runas, feitiços, itens e habilidades), dos 2 patches mais recentes.
 - **Limite da Riot:** todas as chamadas passam por um controle que respeita o limite da chave (20 por segundo e 100 a cada 2 minutos, em cada região). No BR, a coleta de builds usa no máximo metade do limite, para os alertas nunca ficarem esperando.

@@ -21,6 +21,7 @@ import time
 from collections import Counter, deque
 from pathlib import Path
 
+import analise
 import config
 from riot import Limitador, NaoEncontrado, RiotAPI, RiotErro
 
@@ -82,6 +83,8 @@ class Coleta:
         self._carregar()
         self._vistas_fila: deque[str] = deque(self.dados.pop("vistas", []), maxlen=MAX_VISTAS)
         self._vistas: set[str] = set(self._vistas_fila)
+        self._contador_notas = 0
+        self._passar_esperado()
         self.itens: dict[int, dict] = {}     # id -> {"nome", "tipo": lendario/botas/outro/sentinela}
         self.runas: dict[int, str] = {}      # id da runa ou da árvore -> nome
         self._versao_itens = ""
@@ -306,6 +309,33 @@ class Coleta:
         self._vistas.add(match_id)
         self._mudou = True
 
+    # ------------------------------------------------------------ posição normal de cada rota (nota do pós-jogo)
+    def _somar_base_notas(self, info: dict):
+        """Guarda a posição média de cada rota em cada quesito da nota, para a nota não favorecer função."""
+        ps = info["participants"]
+        if len(ps) != 10:
+            return
+        base = self.dados.setdefault("base_notas", {})
+        pcts = analise.percentis(ps, max(info.get("gameDuration", 60), 60) / 60)
+        for p in ps:
+            rota = p.get("teamPosition")
+            if rota not in ROTAS:
+                continue
+            for q, valor in pcts[p["puuid"]].items():
+                soma = base.setdefault(rota, {}).setdefault(q, [0.0, 0])
+                soma[0] += valor
+                soma[1] += 1
+                if soma[1] > 200_000:  # vai esquecendo aos poucos o que é muito antigo
+                    soma[0], soma[1] = soma[0] / 2, soma[1] // 2
+        self._contador_notas += 1
+        if self._contador_notas % 200 == 0:
+            self._passar_esperado()
+
+    def _passar_esperado(self):
+        base = self.dados.get("base_notas", {})
+        analise.definir_esperado({rota: {q: soma / n for q, (soma, n) in qs.items() if n >= 2000}
+                                  for rota, qs in base.items()})
+
     # ------------------------------------------------------------ contagem
     def _patch_aceito(self, patch: str) -> bool:
         patches = sorted(self.dados["patches"], key=_ordem_patch)
@@ -334,6 +364,7 @@ class Coleta:
         if balde is None:
             return
         fila = str(info["queueId"])
+        self._somar_base_notas(info)
         contagem = balde["partidas"].setdefault(fila, {})
         contagem[sigla] = contagem.get(sigla, 0) + 1
         por_fila = balde["filas"].setdefault(fila, {})

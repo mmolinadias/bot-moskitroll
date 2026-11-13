@@ -16,7 +16,8 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 - `riot.py` — `RiotAPI`: requisições com `Limitador` (20/s e 100/2min), Data Dragon pt_BR
   (nomes de campeões; itens e feitiços só quando usam o /ultimate-bravery), cache de imagens em `cache/` (até 100 na memória).
 - `analise.py` — textos de elo, `pontuacao_elo` (100 pts = 1 divisão), nota 0–10 por percentil
-  (KDA, participação, dano, ouro, visão), MVP/ACE/NTP (NTP = menor nota dos 10), odds das apostas.
+  (8 quesitos com `PESOS_ROTA` por rota, menos a posição normal da rota em `ESPERADO`, que a
+  coleta recalcula com `base_notas` no builds.json; sem rota usa 5 quesitos iguais), MVP/ACE/NTP (NTP = menor nota dos 10), odds das apostas.
 - `imagens.py` — Pillow: cartão de `/perfil`.
 - `coleta.py` — `/build`: coleta própria de partidas Solo/Duo (420) e Flex (440) de jogadores Mestre+ de
   KR, EUW e BR (League-V4 + Match-V5 + timeline). Guarda só contadores em `builds.json` (2 patches mais novos,
