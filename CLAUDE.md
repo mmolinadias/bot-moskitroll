@@ -43,8 +43,9 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
 1. Para cada servidor com canal de alertas, checa o Spectator-V5 de cada membro vinculado.
 2. Partida nova → salva elo de antes, posta raio-X + botões de aposta (Azul/Vermelho, abertas por
    `TEMPO_APOSTAS_MIN`). Amigos na mesma partida viram um único aviso.
-3. Partida sumiu do spectator → vai para `pendentes`; busca `BR1_{gameId}` no Match-V5, espera a
-   Riot atualizar o PDL (até 3 tentativas), posta o resumo (nota, MVP, PDL, pentakill), paga as
+3. Fim da partida: o `loop_resultados` (a cada 30 s) pergunta direto ao Match-V5 por `BR1_{gameId}` das
+   partidas com mais de 14 min (`checar_fim_antecipado`); o spectator (2 min) também detecta (remakes).
+   Vai para `pendentes`, espera a Riot atualizar o PDL (até 4 min), posta o resumo (nota, MVP, PDL, pentakill), paga as
    apostas (remake devolve), dá moedas (+50 vitória, +100 MVP/ACE) e grava no histórico.
 4. `loop_semanal`: domingo 20h (configurável) posta o resumo da semana; MVP ganha +500 moedas; sorteia a rifa.
 5. O resumo pós-partida também registra notas dos duelos (`duelos` no dados.json; expiram no `loop_loja`) e

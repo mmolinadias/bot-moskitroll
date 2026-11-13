@@ -64,6 +64,7 @@ class BotLoL(discord.Client):
             await self.tree.sync()
             log.info("Comandos sincronizados globalmente (podem levar até 1h para aparecer)")
         loop_partidas.start()
+        loop_resultados.start()
         loop_semanal.start()
         loop_loja.start()
         loop_status.start()
@@ -649,6 +650,7 @@ async def nova_partida(g: str, canal, game_id: str, jogo: dict, usuarios: list[s
         log.warning("Não consegui postar alerta: %s", e)
     store.de("partidas", g)[game_id] = {
         "jogadores": jogadores, "fila": fila, "inicio": time.time(), "odds": odds,
+        "comecou": time.time() - max(jogo.get("gameLength", 0), 0),
         "apostas_ate": apostas_ate, "apostas": {}}
 
 
@@ -771,47 +773,122 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
         log.warning("Não consegui postar resumo: %s", e)
 
 
-async def processar_pendentes(g: str, canal):
-    pendentes = store.de("pendentes", g)
-    for game_id, p in list(pendentes.items()):
-        try:
-            partida = await riot.partida(f"{config.PLATFORM.upper()}_{game_id}")
-        except NaoEncontrado:
-            p["tentativas"] = p.get("tentativas", 0) + 1
-            if p["tentativas"] > 20:  # a partida nunca apareceu (ex.: personalizada)
-                for linha in liquidar_apostas(g, p, None, True):
-                    log.info("Reembolso: %s", linha)
-                pendentes.pop(game_id)
-            continue
-        except RiotErro as e:
-            # Ex.: a Riot responde 403 para alguns modos especiais. Desiste depois de ~20 min.
-            p["erros"] = p.get("erros", 0) + 1
-            log.warning("Erro ao buscar partida %s (%d/10): %s", game_id, p["erros"], e)
-            if p["erros"] >= 10:
-                for linha in liquidar_apostas(g, p, None, True):
-                    log.info("Reembolso: %s", linha)
-                pendentes.pop(game_id)
-                log.info("Partida %s descartada: a Riot não liberou o resultado.", game_id)
-            continue
+# Fim da partida → resumo. Roda a cada 30 s (loop_resultados), separado da checagem de partidas novas.
+ESPERA_PDL_S = 4 * 60          # quanto tempo esperar a Riot atualizar o PDL depois que o resultado saiu
+DESISTIR_NAO_ACHOU_S = 40 * 60  # partida que nunca aparece no Match-V5 (ex.: personalizada)
+DESISTIR_ERRO_S = 20 * 60       # a Riot responde erro (ex.: 403 em modos especiais)
+CHECAR_FIM_APOS_S = 14 * 60     # antes disso só acaba por remake, e o spectator percebe
+_partidas_baixadas: dict[str, dict] = {}  # resultado já baixado, para não pedir de novo
+_finalizadas: dict[str, float] = {}       # partidas já encerradas (o spectator às vezes ainda mostra)
+_trava_resultados = asyncio.Lock()
 
-        depois: dict[str, list] = {}
-        tipo = FILA_PARA_TIPO.get(partida["info"].get("queueId"))
-        esperar = False
-        if tipo:
-            for u, j in p["jogadores"].items():
-                try:
-                    depois[u] = await riot.elo(j["puuid"])
-                except RiotErro:
-                    continue
-                antes = j["elo_antes"].get(tipo)
-                agora = next((e for e in depois[u] if e["queueType"] == tipo), None)
-                if antes and agora and agora["wins"] + agora["losses"] == antes["wins"] + antes["losses"]:
-                    esperar = True  # a Riot ainda não atualizou o PDL
-        if esperar and p.get("tentativas", 0) < 3:
-            p["tentativas"] = p.get("tentativas", 0) + 1
+
+def mover_para_pendentes(g: str, gid: str):
+    p = store.de("partidas", g).pop(gid, None)
+    if p is None:
+        return
+    p["pendente_desde"] = time.time()
+    store.de("pendentes", g)[gid] = p
+    _finalizadas[gid] = time.time()
+
+
+async def checar_fim_antecipado(g: str):
+    """Pergunta direto ao Match-V5 se a partida já tem resultado, sem esperar o spectator perceber."""
+    for gid, p in list(store.de("partidas", g).items()):
+        if time.time() - p.get("comecou", p["inicio"]) < CHECAR_FIM_APOS_S:
             continue
-        await postar_resumo(g, canal, p, partida, depois)
-        pendentes.pop(game_id, None)
+        try:
+            partida = await riot.partida(f"{config.PLATFORM.upper()}_{gid}")
+        except RiotErro:  # inclui "não encontrado": a partida ainda está rolando
+            continue
+        _partidas_baixadas[gid] = partida
+        mover_para_pendentes(g, gid)
+        log.info("Partida %s acabou (resultado já saiu no Match-V5)", gid)
+
+
+def _desistir(g: str, game_id: str, motivo: str):
+    p = store.de("pendentes", g).pop(game_id)
+    for linha in liquidar_apostas(g, p, None, True):
+        log.info("Reembolso: %s", linha)
+    _partidas_baixadas.pop(game_id, None)
+    log.info("Partida %s descartada: %s", game_id, motivo)
+
+
+async def processar_pendentes(g: str, canal) -> bool:
+    """Devolve True se algo mudou (para salvar o dados.json)."""
+    mudou = False
+    async with _trava_resultados:
+        pendentes = store.de("pendentes", g)
+        for game_id, p in list(pendentes.items()):
+            agora = time.time()
+            desde = p.setdefault("pendente_desde", agora)
+            partida = _partidas_baixadas.get(game_id)
+            if partida is None:
+                try:
+                    partida = await riot.partida(f"{config.PLATFORM.upper()}_{game_id}")
+                except NaoEncontrado:
+                    if agora - desde > DESISTIR_NAO_ACHOU_S:
+                        _desistir(g, game_id, "a partida nunca apareceu na Riot")
+                        mudou = True
+                    continue
+                except RiotErro as e:
+                    if not p.get("erro_avisado"):
+                        log.warning("Erro ao buscar partida %s: %s (tento por até %d min)",
+                                    game_id, e, DESISTIR_ERRO_S // 60)
+                        p["erro_avisado"] = True
+                    if agora - desde > DESISTIR_ERRO_S:
+                        _desistir(g, game_id, "a Riot não liberou o resultado")
+                        mudou = True
+                    continue
+                _partidas_baixadas[game_id] = partida
+
+            depois: dict[str, list] = {}
+            tipo = FILA_PARA_TIPO.get(partida["info"].get("queueId"))
+            esperar = False
+            if tipo:
+                for u, j in p["jogadores"].items():
+                    try:
+                        depois[u] = await riot.elo(j["puuid"])
+                    except RiotErro:
+                        continue
+                    antes = j["elo_antes"].get(tipo)
+                    atual = next((e for e in depois[u] if e["queueType"] == tipo), None)
+                    if antes and atual and atual["wins"] + atual["losses"] == antes["wins"] + antes["losses"]:
+                        esperar = True  # a Riot ainda não atualizou o PDL
+            if esperar and agora - p.setdefault("achada_em", agora) < ESPERA_PDL_S:
+                continue
+            await postar_resumo(g, canal, p, partida, depois)
+            pendentes.pop(game_id, None)
+            _partidas_baixadas.pop(game_id, None)
+            _finalizadas[game_id] = agora
+            mudou = True
+    return mudou
+
+
+@tasks.loop(seconds=30)
+async def loop_resultados():
+    mudou = False
+    for gid, quando in list(_finalizadas.items()):
+        if time.time() - quando > 3 * 3600:
+            _finalizadas.pop(gid, None)
+    for g, canal_id in list(store.d["alertas"].items()):
+        canal = bot.get_channel(int(canal_id))
+        if canal is None:
+            continue
+        try:
+            antes = len(store.de("partidas", g))
+            await checar_fim_antecipado(g)
+            mudou |= len(store.de("partidas", g)) != antes
+            mudou |= await processar_pendentes(g, canal)
+        except Exception:
+            log.exception("Erro processando resultados do servidor %s", g)
+    if mudou:
+        store.salvar()
+
+
+@loop_resultados.before_loop
+async def _antes_resultados():
+    await bot.wait_until_ready()
 
 
 async def verificar_servidor(g: str, canal_id: int):
@@ -841,17 +918,14 @@ async def verificar_servidor(g: str, canal_id: int):
             continue
         acabou = all(u in checados for u in p["jogadores"]) or time.time() - p["inicio"] > 3 * 3600
         if acabou:
-            p["tentativas"] = 0
-            store.de("pendentes", g)[gid] = partidas.pop(gid)
+            mover_para_pendentes(g, gid)
 
     # partidas novas
     for gid, jogo in ativos.items():
         usuarios = [u for u, x in em_jogo.items() if x == gid]
-        if gid in partidas or gid in store.de("pendentes", g):
+        if gid in partidas or gid in store.de("pendentes", g) or gid in _finalizadas:
             continue
         await nova_partida(g, canal, gid, jogo, usuarios)
-
-    await processar_pendentes(g, canal)
 
 
 @tasks.loop(minutes=config.INTERVALO_ALERTA)
