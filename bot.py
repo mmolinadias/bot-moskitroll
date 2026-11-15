@@ -68,6 +68,7 @@ class BotLoL(discord.Client):
         loop_semanal.start()
         loop_loja.start()
         loop_status.start()
+        loop_eventos.start()
         if config.COLETA_BUILDS:
             coleta.ao_patch_novo = anunciar_patch
             coleta.iniciar()
@@ -769,6 +770,8 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
             res = "✅ Vitória" if eu.get("win") else "❌ Derrota"
         resultados.append(eu.get("win"))
         nota = notas.get(eu["puuid"], {})
+        if fila != 440:  # MVP (selo, bônus e contador) só vale na Ranqueada Flex
+            nota = {**nota, "mvp": False}
         selo = " 🏆 **MVP**" if nota.get("mvp") else (" 🎖️ **ACE**" if nota.get("ace") else "")
         if nota.get("ntp") and fila == 440:
             selo += " 🤡 **NTP**"
@@ -1560,6 +1563,81 @@ async def loop_loja():
         store.salvar()
 
 
+# ================================================================ eventos de sorteio
+@bot.tree.command(name="evento", description="Cria um sorteio de moedas: quem der /sorteio no prazo concorre")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.describe(moedas="Total de moedas que vão ser sorteadas",
+                       minutos="Quanto tempo o pessoal tem para dar /sorteio")
+async def cmd_evento(interaction: discord.Interaction, moedas: app_commands.Range[int, 1, 100_000_000],
+                     minutos: app_commands.Range[int, 1, 10_080]):
+    g = str(interaction.guild.id)
+    if store.d["eventos"].get(g):
+        ev = store.d["eventos"][g]
+        raise RiotErro(f"Já tem um evento valendo até <t:{int(ev['fim'])}:t>. Espere ele acabar.")
+    fim = time.time() + minutos * 60
+    store.d["eventos"][g] = {"moedas": moedas, "fim": fim, "canal": interaction.channel_id,
+                             "criador": str(interaction.user.id), "participantes": []}
+    store.salvar()
+    embed = discord.Embed(
+        title="🎉 Evento de sorteio!", color=CORES["ouro"],
+        description=(f"Estão em jogo **{numero(moedas)}** moedas!\n"
+                     f"Digite **`/sorteio`** para participar. Acaba <t:{int(fim)}:R> (<t:{int(fim)}:t>).\n"
+                     f"Um sortudo leva tudo."))
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="sorteio", description="Entra no evento de sorteio de moedas que está valendo")
+@app_commands.guild_only()
+async def cmd_sorteio(interaction: discord.Interaction):
+    g, u = str(interaction.guild.id), str(interaction.user.id)
+    ev = store.d["eventos"].get(g)
+    if not ev or ev["fim"] <= time.time():
+        raise RiotErro("Não tem nenhum evento de sorteio valendo agora.")
+    if u in ev["participantes"]:
+        raise RiotErro(f"Você já está no sorteio! Resultado <t:{int(ev['fim'])}:R>.")
+    ev["participantes"].append(u)
+    store.salvar()
+    await interaction.response.send_message(
+        f"🎟️ {nome(g, u)} entrou no sorteio de **{numero(ev['moedas'])}** moedas! "
+        f"({plural(len(ev['participantes']), 'participante')} · acaba <t:{int(ev['fim'])}:R>)",
+        allowed_mentions=SEM_MENCAO)
+
+
+@tasks.loop(seconds=15)
+async def loop_eventos():
+    agora = time.time()
+    for g, ev in list(store.d["eventos"].items()):
+        if not ev or ev["fim"] > agora:
+            continue
+        del store.d["eventos"][g]
+        canal = bot.get_channel(ev["canal"])
+        if ev["participantes"]:
+            ganhador = random.choice(ev["participantes"])
+            store.carteira(g, ganhador)["saldo"] += ev["moedas"]
+            embed = discord.Embed(
+                title="🎉 Resultado do sorteio!", color=CORES["ok"],
+                description=(f"{nome(g, ganhador)} ganhou **{numero(ev['moedas'])}** moedas! 🤑\n"
+                             f"Concorreram {plural(len(ev['participantes']), 'pessoa')}."))
+            conteudo, mencao = f"<@{ganhador}>", discord.AllowedMentions(users=[discord.Object(int(ganhador))])
+        else:
+            embed = discord.Embed(title="🎉 Sorteio encerrado", color=CORES["info"],
+                                  description=f"Ninguém participou. As {numero(ev['moedas'])} moedas não saíram.")
+            conteudo, mencao = None, SEM_MENCAO
+        store.salvar()
+        if canal:
+            try:
+                await canal.send(content=conteudo, embed=embed, allowed_mentions=mencao)
+            except discord.HTTPException as e:
+                log.warning("Não consegui postar o resultado do sorteio: %s", e)
+
+
+@loop_eventos.before_loop
+async def _antes_eventos():
+    await bot.wait_until_ready()
+
+
 @loop_loja.before_loop
 async def _antes_loja():
     await bot.wait_until_ready()
@@ -2036,7 +2114,8 @@ async def cmd_ajuda(interaction: discord.Interaction):
     embed.add_field(name="💰 Apostas (moedas fictícias)", inline=False, value=(
         "Aposte pelos botões quando alguém entrar em partida.\n"
         "`/duelo @amigo` — maior nota na próxima partida leva as moedas\n"
-        "`/carteira` · `/diario` · `/doar` · `/top-moedas`"))
+        "`/carteira` · `/diario` · `/doar` · `/top-moedas`\n"
+        "`/sorteio` — entra no evento de sorteio · `/evento` — cria um sorteio (admin)"))
     embed.add_field(name="🛒 Loja", inline=False, value=(
         "`/loja` — itens à venda · `/comprar` — compra um item\n"
         "`/bloquear-apelido` — não deixa mudarem seu apelido · `/config-loja` — liga/desliga castigos (admin)"))

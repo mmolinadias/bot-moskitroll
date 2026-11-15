@@ -5,7 +5,7 @@
 - **`/aovivo`**: raio-X da partida, com elo, winrate e maestria dos 10 jogadores, e qual time é favorito.
 - **Alertas de partida**: quando alguém vinculado entra em partida, o bot posta o raio-X, e os botões de **aposta**.
 - **Resumo pós-partida**: resultado, KDA, dano, participação, CS, visão, **nota de 0 a 10**, **MVP/ACE**, **PDL ganho ou perdido** (avisa quando alguém sobe de elo) e pentakill.
-- **Apostas com moedas fictícias**: aposte no time azul ou vermelho. A odd depende do elo dos times. Comandos: `/carteira`, `/diario`, `/doar` e `/top-moedas`.
+- **Apostas com moedas fictícias**: aposte no time azul ou vermelho. A odd depende do elo dos times. Comandos: `/carteira`, `/diario`, `/doar` e `/top-moedas`. Um admin pode criar um sorteio com `/evento moedas minutos`; quem der `/sorteio` no prazo concorre e um sortudo leva tudo.
 - **Resumo semanal automático** (domingo às 20h): MVP da semana, quem mais jogou, quem mais ganhou, quem mais subiu ou caiu de PDL, quem mais morreu, pé frio, melhor partida e pentakills. Também dá para ver a qualquer hora com `/semana`.
 - **`/ranking`**: agora mostra Solo/Duo **e** Flex.
 
