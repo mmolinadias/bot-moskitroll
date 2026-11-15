@@ -51,6 +51,7 @@ Elo, histórico, raio-X da partida ao vivo, resumo pós-jogo com nota de 0 a 10,
 | `/duplas` | Quais amigos ganham mais jogando juntos |
 | `/duelo @amigo moedas` | Quem tirar a maior nota na próxima partida leva as moedas |
 | `/carteira` · `/diario` · `/top-moedas` | Moedas das apostas |
+| `/doar amigo moedas` | Doa moedas para um amigo |
 | `/loja` · `/comprar item` | Itens à venda e compra |
 | `/bloquear-apelido` | Não deixa ninguém comprar apelido forçado para você |
 | `/config-loja` | Liga ou desliga os castigos (admin) |

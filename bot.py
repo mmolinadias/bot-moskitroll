@@ -595,6 +595,31 @@ async def cmd_diario(interaction: discord.Interaction):
         f"🎁 +**{config.BONUS_DIARIO}** moedas! Agora você tem **{numero(c['saldo'])}**.")
 
 
+@bot.tree.command(name="doar", description="Doa moedas para um amigo")
+@app_commands.guild_only()
+@app_commands.describe(amigo="Quem vai receber (amigos vinculados)", moedas="Quantas moedas doar",
+                       mensagem="Recado opcional")
+@app_commands.autocomplete(amigo=autocompletar_vinculado)
+async def cmd_doar(interaction: discord.Interaction, amigo: str,
+                   moedas: app_commands.Range[int, 1, 1_000_000_000], mensagem: str | None = None):
+    g = str(interaction.guild.id)
+    alvo = await resolver_alvo(interaction.guild, amigo)
+    if alvo.bot or alvo.id == interaction.user.id:
+        raise RiotErro("Escolha um amigo (não vale você mesmo nem bots).")
+    minha = store.carteira(g, interaction.user.id)
+    if minha["saldo"] < moedas:
+        raise RiotErro(f"Você tem só **{numero(minha['saldo'])}** moedas.")
+    minha["saldo"] -= moedas
+    dele = store.carteira(g, alvo.id)
+    dele["saldo"] += moedas
+    store.salvar()
+    texto = (f"🎁 {nome(g, interaction.user.id)} doou **{numero(moedas)}** moedas para {nome(g, alvo.id)}!\n"
+             f"Saldo de {nome(g, alvo.id)}: **{numero(dele['saldo'])}** · seu saldo: **{numero(minha['saldo'])}**")
+    if mensagem:
+        texto += f"\n💬 {escape_markdown(' '.join(mensagem.split())[:200])}"
+    await interaction.response.send_message(texto, allowed_mentions=SEM_MENCAO)
+
+
 @bot.tree.command(name="top-moedas", description="Quem tem mais moedas no servidor")
 @app_commands.guild_only()
 async def cmd_top_moedas(interaction: discord.Interaction):
@@ -2010,7 +2035,7 @@ async def cmd_ajuda(interaction: discord.Interaction):
     embed.add_field(name="💰 Apostas (moedas fictícias)", inline=False, value=(
         "Aposte pelos botões quando alguém entrar em partida.\n"
         "`/duelo @amigo` — maior nota na próxima partida leva as moedas\n"
-        "`/carteira` · `/diario` · `/top-moedas`"))
+        "`/carteira` · `/diario` · `/doar` · `/top-moedas`"))
     embed.add_field(name="🛒 Loja", inline=False, value=(
         "`/loja` — itens à venda · `/comprar` — compra um item\n"
         "`/bloquear-apelido` — não deixa mudarem seu apelido · `/config-loja` — liga/desliga castigos (admin)"))
