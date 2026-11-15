@@ -770,7 +770,7 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
         resultados.append(eu.get("win"))
         nota = notas.get(eu["puuid"], {})
         selo = " 🏆 **MVP**" if nota.get("mvp") else (" 🎖️ **ACE**" if nota.get("ace") else "")
-        if nota.get("ntp"):
+        if nota.get("ntp") and fila == 440:
             selo += " 🤡 **NTP**"
         cs = eu.get("totalMinionsKilled", 0) + eu.get("neutralMinionsKilled", 0)
         dano = eu.get("totalDamageDealtToChampions", 0)
@@ -1071,12 +1071,13 @@ async def cmd_semana(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, allowed_mentions=SEM_MENCAO)
 
 
-@bot.tree.command(name="mvp", description="Quantas vezes cada um foi MVP e NTP nos últimos 7 dias")
+@bot.tree.command(name="mvp", description="Quantas vezes cada um foi MVP e NTP na Flex nos últimos 7 dias")
 @app_commands.guild_only()
 async def cmd_mvp(interaction: discord.Interaction):
     g = str(interaction.guild.id)
     limite = time.time() - 7 * 86400
-    hist = [e for e in store.historico(g) if e["ts"] >= limite and not e.get("remake")]
+    hist = [e for e in store.historico(g)
+            if e["ts"] >= limite and not e.get("remake") and e.get("fila") == 440]  # só Ranqueada Flex
     mvps, ntps, jogos = defaultdict(int), defaultdict(int), defaultdict(int)
     for e in hist:
         jogos[e["user"]] += 1
@@ -1084,7 +1085,7 @@ async def cmd_mvp(interaction: discord.Interaction):
         ntps[e["user"]] += 1 if e.get("ntp") else 0
     if not hist:
         await interaction.response.send_message(
-            "Ainda não tenho partidas registradas nesta semana. As partidas são registradas quando "
+            "Ainda não tenho partidas de Flex registradas nesta semana. As partidas são registradas quando "
             "os alertas estão ligados (`/config-alertas`).", ephemeral=True)
         return
     medalhas = ["🥇", "🥈", "🥉"]
@@ -1097,10 +1098,10 @@ async def cmd_mvp(interaction: discord.Interaction):
                          f"**{contagem[u]}x** em {plural(jogos[u], 'partida')}"
                          for i, u in enumerate(lista[:10]))
 
-    embed = discord.Embed(title="🏆 MVP e 🤡 NTP da semana", color=CORES["ouro"])
+    embed = discord.Embed(title="🏆 MVP e 🤡 NTP da semana (Flex)", color=CORES["ouro"])
     embed.add_field(name="🏆 MVP (melhor nota do time que venceu)", value=tabela(mvps)[:1024], inline=False)
     embed.add_field(name="🤡 NTP (pior nota da partida)", value=tabela(ntps)[:1024], inline=False)
-    embed.set_footer(text=f"Últimos 7 dias · {plural(len(hist), 'partida')} registradas")
+    embed.set_footer(text=f"Ranqueada Flex · últimos 7 dias · {plural(len(hist), 'partida')}")
     await interaction.response.send_message(embed=embed, allowed_mentions=SEM_MENCAO)
 
 
@@ -2029,7 +2030,7 @@ async def cmd_ajuda(interaction: discord.Interaction):
         "`/vincular Nome#TAG` — liga sua conta\n"
         "`/ranking` — ranking de elo (Solo/Duo e Flex)\n"
         "`/semana` — resumo dos últimos 7 dias\n"
-        "`/mvp` — quantas vezes cada um foi MVP e NTP na semana\n"
+        "`/mvp` — quantas vezes cada um foi MVP e NTP na Flex da semana\n"
         "`/duplas` — quem ganha mais jogando junto\n"
         "`/config-alertas #canal` — avisos, resumos e apostas (admin)"))
     embed.add_field(name="💰 Apostas (moedas fictícias)", inline=False, value=(
