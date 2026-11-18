@@ -1032,15 +1032,28 @@ def montar_semana(g: str, dias: int = 7):
     vitorioso = max(por, key=lambda u: (sum(e["vitoria"] for e in por[u]), wr(u)))
     linhas.append(f"✅ **Mais vitórias:** {nome(g, vitorioso)} — {sum(e['vitoria'] for e in por[vitorioso])} "
                   f"({wr(vitorioso):.0f}% WR)")
-    pdl = {u: sum(e["pdl"] for e in es if e.get("pdl") is not None) for u, es in por.items()
-           if any(e.get("pdl") is not None for e in es)}
-    if pdl:
+    # PDL separado por fila (Solo/Duo e Flex); só entra quem jogou pelo menos 5 ranqueadas naquela fila
+    for fila_pdl, nome_fila_pdl in ((420, "Solo/Duo"), (440, "Flex")):
+        jogos_fila = {u: [e for e in es if e.get("fila") == fila_pdl and e.get("pdl") is not None]
+                      for u, es in por.items()}
+        jogos_fila = {u: es for u, es in jogos_fila.items() if len(es) >= 5}
+        if not jogos_fila:
+            continue
+        pdl = {u: sum(e["pdl"] for e in es) for u, es in jogos_fila.items()}
+
+        def placar(u):
+            es = jogos_fila[u]
+            v = sum(e["vitoria"] for e in es)
+            return f"{v}V {len(es) - v}D em {plural(len(es), 'partida')}"
+
         subiu = max(pdl, key=pdl.get)
         if pdl[subiu] > 0:
-            linhas.append(f"📈 **Mais PDL ganho:** {nome(g, subiu)} — +{pdl[subiu]} PDL")
+            linhas.append(f"📈 **Mais PDL ganho ({nome_fila_pdl}):** {nome(g, subiu)} — +{pdl[subiu]} PDL "
+                          f"({placar(subiu)})")
         caiu = min(pdl, key=pdl.get)
         if pdl[caiu] < 0:
-            linhas.append(f"📉 **Mais PDL perdido:** {nome(g, caiu)} — {pdl[caiu]} PDL")
+            linhas.append(f"📉 **Mais PDL perdido ({nome_fila_pdl}):** {nome(g, caiu)} — {pdl[caiu]} PDL "
+                          f"({placar(caiu)})")
     morreu = max(por, key=lambda u: sum(e["d"] for e in por[u]))
     linhas.append(f"💀 **Quem mais morreu:** {nome(g, morreu)} — {sum(e['d'] for e in por[morreu])} mortes "
                   f"({media(morreu, 'd'):.1f} por jogo)")

@@ -47,7 +47,8 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
    partidas com mais de 14 min (`checar_fim_antecipado`); o spectator (2 min) também detecta (remakes).
    Vai para `pendentes`, espera a Riot atualizar o PDL (até 4 min), posta o resumo (nota, MVP, PDL, pentakill), paga as
    apostas (remake devolve), dá moedas (+50 vitória, +100 MVP/ACE) e grava no histórico.
-4. `loop_semanal`: domingo 20h (configurável) posta o resumo da semana; MVP ganha +500 moedas; sorteia a rifa.
+4. `/semana`: PDL ganho/perdido separado por fila (Solo/Duo e Flex), mínimo 5 ranqueadas na fila, mostra V/D e total de partidas.
+   `loop_semanal`: domingo 20h (configurável) posta o resumo da semana; MVP ganha +500 moedas; sorteia a rifa.
 5. O resumo pós-partida também registra notas dos duelos (`duelos` no dados.json; expiram no `loop_loja`) e
    avisa sequências (`aviso_sequencia`). O histórico agora guarda `jogo` e `time` (usados no `/duplas`).
 6. `loop_status` (10 min): LoL-Status-V4 do BR; avisa início/fim de manutenções e incidentes (`geral.status_ativos`).
