@@ -30,6 +30,9 @@ O usuário é iniciante em programação: explique passos de terminal de forma s
   apostas, rifa, desafio Bravery, escudo, imunidade de 10 min, `pendentes` para desmutar/devolver apelido).
   Os comandos `/loja`, `/comprar`, `/bloquear-apelido`, `/config-loja`, o `loop_loja` (20 s) e o
   `on_voice_state_update` (desmuta quem volta para a call) ficam no `bot.py`. Compra só é cobrada se o efeito der certo.
+- `conquistas.py` — 17 conquistas permanentes (`CONQUISTAS`); contadores em `conquistas` no dados.json (montados do histórico na 1ª vez, sem anunciar); `registrar` é chamado no pós-jogo e anuncia as novas; `/conquistas` e bloco no canto do `/perfil`.
+- Fontes do `/perfil`: no Linux precisa do pacote `fonts-dejavu-core` (a fonte padrão do Pillow não tem acentos).
+- Sequência de derrotas: frase diferente para cada número de 1 a 20 (`DERROTAS_SEGUIDAS`), genérica depois de 20.
 - `dados.py` — persistência em `dados.json` (vínculos, canal de alertas, partidas em andamento,
   pendentes, histórico, moedas, controle do resumo semanal). Tudo indexado por id do servidor.
 - `config.py` — lê o `.env`.

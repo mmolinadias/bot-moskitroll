@@ -20,7 +20,8 @@ CHAVES = {
     "geral": {},           # patch anunciado, avisos de status do servidor
     "loja": {},            # {guild: {"usuarios", "rifa", "desafios", "pendentes", "config"}}
     "ntp_smurf": {},       # {guild: {jogo: {"riot_id", "campeao", "kda", "nota", "ts", "dono", "por"}}}
-    "eventos": {},         # {guild: {"moedas", "fim", "canal", "criador", "participantes"}}  /evento + /sorteio
+    "eventos": {},
+    "conquistas": {},      # {guild: {user: {"tem": {id: ts}, contadores...}}}  conquistas.py         # {guild: {"moedas", "fim", "canal", "criador", "participantes"}}  /evento + /sorteio
 }
 
 

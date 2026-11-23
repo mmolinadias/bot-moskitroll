@@ -23,8 +23,12 @@ CORES_TIER = {
 
 @lru_cache(maxsize=64)
 def fonte(tamanho: int, negrito: bool = False):
-    nomes = (["segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf", "Arial Bold.ttf"] if negrito
-             else ["segoeui.ttf", "arial.ttf", "DejaVuSans.ttf", "Arial.ttf"])
+    # Windows (Segoe/Arial) e Linux (DejaVu: no Debian, `apt install fonts-dejavu-core`).
+    # A fonte padrão do Pillow não tem acentos, por isso ela é o último recurso.
+    nomes = (["segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf", "Arial Bold.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"] if negrito
+             else ["segoeui.ttf", "arial.ttf", "DejaVuSans.ttf", "Arial.ttf",
+                   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"])
     for nome in nomes:
         try:
             return ImageFont.truetype(nome, tamanho)
@@ -133,9 +137,24 @@ def desenhar_perfil(d: dict, imgs: dict) -> io.BytesIO:
     dr.rounded_rectangle((106 - lw / 2, 160, 106 + lw / 2, 188), 14, fill=(18, 20, 28), outline=cor_tier, width=2)
     dr.text((106, 174), nivel, font=fn, fill=BRANCO, anchor="mm")
 
+    # conquistas (canto superior direito)
+    conq = d.get("conquistas")
+    if conq:
+        painel(img, (760, 40, 960, 190))
+        dr.ellipse((778, 56, 810, 88), fill=DOURADO, outline=(150, 110, 30), width=2)
+        dr.text((794, 72), "★", font=fonte(20, True), fill=(120, 80, 10), anchor="mm")
+        dr.text((820, 58), "CONQUISTAS", font=fonte(13, True), fill=CINZA)
+        dr.text((820, 74), f"{conq['tem']}/{conq['total']}", font=fonte(20, True), fill=BRANCO)
+        f_c = fonte(15)
+        if conq["ultimas"]:
+            for i, n in enumerate(conq["ultimas"][:3]):
+                dr.text((778, 104 + i * 26), cortar_texto(f"• {n}", f_c, 170), font=f_c, fill=DOURADO)
+        else:
+            dr.text((778, 110), "Nenhuma ainda", font=f_c, fill=NEUTRO)
+
     # nome
     f_nome = fonte(46, True)
-    nome = cortar_texto(d["nome"], f_nome, 560)
+    nome = cortar_texto(d["nome"], f_nome, 440 if conq else 560)
     dr.text((200, 44), nome, font=f_nome, fill=BRANCO)
     dr.text((200 + f_nome.getlength(nome) + 10, 62), f"#{d['tag']}", font=fonte(26), fill=CINZA)
     sub = [f"Nível {d['nivel']}"]
@@ -145,7 +164,8 @@ def desenhar_perfil(d: dict, imgs: dict) -> io.BytesIO:
     dr.text((202, 112), "  •  ".join(sub), font=fonte(20), fill=CINZA)
     if d.get("titulo"):  # título comprado na loja
         f_titulo = fonte(24, True)
-        dr.text((202, 148), cortar_texto(f"“{d['titulo']}”", f_titulo, 740), font=f_titulo, fill=cor_tier)
+        dr.text((202, 148), cortar_texto(f"“{d['titulo']}”", f_titulo, 540 if conq else 740), font=f_titulo,
+                fill=cor_tier)
 
     # ranqueadas
     for i, (titulo, e) in enumerate((("RANQUEADA SOLO/DUO", d.get("solo")), ("RANQUEADA FLEX", d.get("flex")))):
@@ -173,7 +193,9 @@ def desenhar_perfil(d: dict, imgs: dict) -> io.BytesIO:
         x = 60 + i * 160
         colar(img, imgs.get(f"camp{i}"), (x, 390), 62, raio=12)
         dr.text((x + 72, 394), cortar_texto(m["nome"], fonte(18, True), 84), font=fonte(18, True), fill=BRANCO)
-        dr.text((x + 72, 422), f"M{m['nivel']} · {compacto(m['pontos'])}", font=fonte(16), fill=CINZA)
+        f_m = fonte(14)
+        dr.text((x + 72, 420), f"Nível {m['nivel']}", font=f_m, fill=CINZA)
+        dr.text((x + 72, 438), cortar_texto(f"{compacto(m['pontos'])} pts", f_m, 84), font=f_m, fill=CINZA)
 
     # últimas partidas
     painel(img, (580, 350, 960, 470))

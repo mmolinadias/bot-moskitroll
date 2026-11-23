@@ -19,6 +19,7 @@ import config
 from analise import (FILA_PARA_TIPO, FILAS_RANK, TIMES_PT, calcular_notas, calcular_odds,
                      compacto, kda, melhor_fila, nome_fila, numero, pontuacao_elo, texto_elo,
                      texto_pontuacao, texto_variacao, tier_curto, winrate)
+from conquistas import CONQUISTAS, Conquistas
 from dados import Dados
 from imagens import gerar_cartao_perfil
 from loja import (APELIDO_HORAS, CASTIGOS, CATEGORIAS, CONTAVEIS, DESAFIO_HORAS, ITENS, PREMIO_DESAFIO,
@@ -33,6 +34,7 @@ log = logging.getLogger("bot-lol")
 riot = RiotAPI()
 store = Dados(config.PASTA / "dados.json")
 loja = DadosLoja(store)
+conq = Conquistas(store)
 coleta = Coleta(riot, config.PASTA / "builds.json")
 
 CORES = {"ok": 0x2ECC71, "info": 0x3498DB, "aviso": 0xE67E22, "erro": 0xE74C3C, "ouro": 0xF1C40F}
@@ -295,6 +297,9 @@ async def cmd_perfil(interaction: discord.Interaction, jogador: str | None = Non
         if dono:
             itens = loja.servidor(interaction.guild.id)["usuarios"].get(dono, {})
             dados_cartao.update({k: itens[k] for k in ("titulo", "cor", "fundo", "coroa") if itens.get(k)})
+            tem, _ = conq.lista(interaction.guild.id, dono)
+            dados_cartao["conquistas"] = {"total": len(CONQUISTAS), "tem": len(tem),
+                                          "ultimas": [CONQUISTAS[c][1] for c in tem[-3:]][::-1]}
     arquivo = await gerar_cartao_perfil(riot, dados_cartao)
     await interaction.followup.send(file=discord.File(arquivo, filename="perfil.png"))
 
@@ -753,7 +758,7 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
 
     minutos = max(info.get("gameDuration", 60), 60) / 60
     resultados = []
-    sequencias, duelos = [], []
+    sequencias, duelos, novas_conquistas = [], [], []
     embed = discord.Embed(title=f"🏁 Fim de partida — {nome_fila(fila)}",
                           description=f"Duração: {int(minutos)}min", color=CORES["info"])
     for u, j in partida_salva["jogadores"].items():
@@ -811,6 +816,8 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
             "k": k, "d": d, "a": a, "nota": nota.get("nota", 0), "mvp": bool(nota.get("mvp")), "ntp": bool(nota.get("ntp")),
             "pdl": pdl, "fila": fila, "remake": remake, "penta": bool(eu.get("pentaKills")),
             "jogo": info.get("gameId"), "time": eu.get("teamId")})
+        for txt in conq.registrar(g, u, store.historico(g)[-1]):
+            novas_conquistas.append(f"{nome(g, u)}: {txt}")
         if not remake:
             aviso = aviso_sequencia(g, u)
             if aviso:
@@ -827,6 +834,8 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
         embed.add_field(name="⚔️ Duelos", value="\n".join(duelos)[:1024], inline=False)
     if sequencias:
         embed.add_field(name="📊 Sequências", value="\n".join(sequencias)[:1024], inline=False)
+    if novas_conquistas:
+        embed.add_field(name="🏅 Conquista desbloqueada!", value="\n".join(novas_conquistas)[:1024], inline=False)
     primeiro = next(iter(partida_salva["jogadores"].values()))
     if riot.url_campeao(primeiro["campeao"]):
         embed.set_thumbnail(url=riot.url_campeao(primeiro["campeao"]))
@@ -849,7 +858,8 @@ def texto_ntp_smurf(g: str, s: dict) -> str:
     placar = " · ".join(f"{nome(g, u)} ({n})" for u, n in contagem.most_common()) or "nenhum voto ainda"
     if s.get("encerrado"):
         if s.get("dono"):
-            return f"{base}\n🗳️ A maioria decidiu: o NTP foi para {nome(g, s['dono'])}. Votos: {placar}"
+            extra = "".join(f"\n🏅 {nome(g, s['dono'])}: {t}" for t in s.get("conquistas", []))
+            return f"{base}\n🗳️ A maioria decidiu: o NTP foi para {nome(g, s['dono'])}. Votos: {placar}{extra}"
         return f"{base}\n🗳️ Ninguém votou, o NTP não foi para ninguém."
     return (f"{base}\nDe quem é essa main? **Votem na lista** — a maioria decide. "
             f"Acaba <t:{int(s['fim'])}:R>.\nVotos: {placar}")
@@ -895,6 +905,7 @@ async def encerrar_votacoes_ntp(agora: float):
             if contagem:
                 maior = max(contagem.values())
                 s["dono"] = random.choice([u for u, n in contagem.items() if n == maior])  # empate: sorteio
+                s["conquistas"] = conq.ntp_extra(g, s["dono"], time.time())
             s["encerrado"] = True
             store.salvar()
             canal = bot.get_channel(s.get("canal") or 0)
@@ -1185,6 +1196,27 @@ async def cmd_semana(interaction: discord.Interaction):
         return
     embed.description = embed.description.replace(" (+500 moedas)", "")
     embed.title = "📅 Últimos 7 dias"
+    await interaction.response.send_message(embed=embed, allowed_mentions=SEM_MENCAO)
+
+
+@bot.tree.command(name="conquistas", description="Conquistas desbloqueadas (suas ou de um amigo)")
+@app_commands.guild_only()
+@app_commands.describe(amigo="Amigo vinculado (vazio = você)")
+@app_commands.autocomplete(amigo=autocompletar_vinculado)
+async def cmd_conquistas(interaction: discord.Interaction, amigo: str | None = None):
+    g = str(interaction.guild.id)
+    alvo = await resolver_alvo(interaction.guild, amigo) if amigo else interaction.user
+    tem, falta = conq.lista(g, alvo.id)
+    c = conq.jogador(g, alvo.id)
+    embed = discord.Embed(title=f"🏅 Conquistas — {len(tem)}/{len(CONQUISTAS)}", color=CORES["ouro"],
+                          description=f"De {nome(g, alvo.id)}")
+    if tem:
+        embed.add_field(name="✅ Desbloqueadas", inline=False, value="\n".join(
+            f"{conq.texto(cid)} · <t:{int(c['tem'][cid])}:d>" for cid in tem)[:1024])
+    if falta:
+        embed.add_field(name="🔒 Faltam", inline=False, value="\n".join(conq.texto(cid) for cid in falta)[:1024])
+    embed.set_footer(text=f"{c['jogos']} partidas · {c['vitorias']} vitórias · {len(c['campeoes'])} campeões · "
+                          f"{c['mvps']} MVP · {c['ntps']} NTP")
     await interaction.response.send_message(embed=embed, allowed_mentions=SEM_MENCAO)
 
 
@@ -1781,12 +1813,32 @@ async def on_voice_state_update(membro: discord.Member, antes: discord.VoiceStat
 
 
 # ================================================================ sequências (tilt / on fire)
+DERROTAS_SEGUIDAS = {
+    1: "😐 {quem} perdeu uma. Acontece, bola pra frente.",
+    2: "😕 {quem} perdeu **2 seguidas**. Ainda dá pra chamar de azar.",
+    3: "😬 {quem} perdeu **3 seguidas**. O time tá estranho ou é impressão?",
+    4: "🥤 {quem} perdeu **4 seguidas**. Hora de um copo d'água.",
+    5: "🧘 {quem} perdeu **5 seguidas**. Respira fundo e conta até dez.",
+    6: "🥶 {quem} perdeu **6 seguidas**. Talvez seja melhor dar uma pausa...",
+    7: "🌧️ {quem} perdeu **7 seguidas**. Tem uma nuvem preta em cima dessa conta.",
+    8: "💀 {quem} perdeu **8 seguidas**. Desinstala?",
+    9: "📉 {quem} perdeu **9 seguidas**. O gráfico do PDL virou tobogã.",
+    10: "🪦 {quem} perdeu **10 seguidas**. F no chat.",
+    11: "🧂 {quem} perdeu **11 seguidas**. O sal já tá vazando pelo microfone.",
+    12: "🚑 {quem} perdeu **12 seguidas**. Chamaram o SAMU do elo.",
+    13: "🃏 {quem} perdeu **13 seguidas**. Número do azar, faz sentido.",
+    14: "🛌 {quem} perdeu **14 seguidas**. A cama tá te chamando faz tempo.",
+    15: "🕳️ {quem} perdeu **15 seguidas**. Achou o fundo do poço e começou a cavar.",
+    16: "🧱 {quem} perdeu **16 seguidas**. Isso já é construção de muro de derrotas.",
+    17: "🐢 {quem} perdeu **17 seguidas**. A Riot vai mandar uma carta de condolências.",
+    18: "📺 {quem} perdeu **18 seguidas**. Vira streamer: o conteúdo já está pronto.",
+    19: "🌋 {quem} perdeu **19 seguidas**. Mais um e a gente faz uma estátua.",
+    20: "🗿 {quem} perdeu **20 seguidas**. Estátua erguida. Lenda viva (do jeito errado).",
+}
 AVISOS_SEQUENCIA = {
     True: {5: "🔥 {quem} ganhou **{n} seguidas**! Está on fire.", 7: "🔥🔥 {quem} ganhou **{n} seguidas**! Alguém para essa pessoa.",
            10: "☄️ {quem} ganhou **{n} seguidas**! Isso é smurf?", 15: "👑 {quem} ganhou **{n} seguidas**!!!"},
-    False: {4: "😬 {quem} perdeu **{n} seguidas**. Hora de um copo d'água?",
-            6: "🥶 {quem} perdeu **{n} seguidas**. Talvez seja melhor dar uma pausa...",
-            8: "💀 {quem} perdeu **{n} seguidas**. Desinstala?", 10: "🪦 {quem} perdeu **{n} seguidas**. F."},
+    False: DERROTAS_SEGUIDAS,
 }
 
 
@@ -1802,6 +1854,8 @@ def aviso_sequencia(g: str, u: str) -> str | None:
             break
         n += 1
     modelo = AVISOS_SEQUENCIA[bool(ultimo)].get(n)
+    if not ultimo and n > 20:
+        modelo = "♾️ {quem} perdeu **{n} seguidas**. Já passou de qualquer frase que a gente tinha preparado."
     return modelo.format(quem=nome(g, u), n=n) if modelo else None
 
 
@@ -2230,6 +2284,7 @@ async def cmd_ajuda(interaction: discord.Interaction):
         "`/vincular Nome#TAG` — liga sua conta\n"
         "`/ranking` — ranking de elo (Solo/Duo e Flex)\n"
         "`/semana` — resumo dos últimos 7 dias\n"
+        "`/conquistas` — suas conquistas (também aparecem no `/perfil`)\n"
         "`/mvp` — quantas vezes cada um foi MVP e NTP na Flex da semana\n"
         "`/duplas` — quem ganha mais jogando junto\n"
         "`/config-alertas #canal` — avisos, resumos e apostas (admin)"))
