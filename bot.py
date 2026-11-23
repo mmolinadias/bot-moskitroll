@@ -54,7 +54,7 @@ class BotLoL(discord.Client):
     async def setup_hook(self):
         await riot.iniciar()
         await atualizar_puuids()
-        self.add_dynamic_items(BotaoAposta, BotaoDuelo)
+        self.add_dynamic_items(BotaoAposta, BotaoDuelo, EscolhaNtpSmurf)
         if config.GUILD_ID:
             guild = discord.Object(id=int(config.GUILD_ID))
             self.tree.copy_global_to(guild=guild)
@@ -834,6 +834,80 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
         await canal.send(embed=embed, allowed_mentions=SEM_MENCAO)
     except discord.HTTPException as e:
         log.warning("Não consegui postar resumo: %s", e)
+    if fila == 440 and not remake:
+        await perguntar_ntp_smurf(g, canal, info, notas, partida_salva)
+
+
+# NTP numa smurf (conta não vinculada) do time de alguém vinculado: o pessoal escolhe de quem é a main
+async def perguntar_ntp_smurf(g: str, canal, info: dict, notas: dict, partida_salva: dict):
+    ps = info["participants"]
+    pior = next((p for p in ps if notas.get(p["puuid"], {}).get("ntp")), None)
+    vinculados = {j["puuid"] for j in partida_salva["jogadores"].values()}
+    times = {p["teamId"] for p in ps if p["puuid"] in vinculados}
+    if not pior or pior["puuid"] in vinculados or pior["teamId"] not in times:
+        return  # NTP foi de alguém vinculado ou do time inimigo
+    if any(v.get("puuid") == pior["puuid"] for v in store.de("vinculos", g).values()):
+        return
+    jogo = str(info.get("gameId"))
+    no_jogo = set(partida_salva["jogadores"])
+    candidatos = [u for u in store.de("vinculos", g) if u not in no_jogo]
+    if not candidatos:
+        return
+    conta = f"{pior.get('riotIdGameName') or '?'}#{pior.get('riotIdTagline') or '?'}"
+    k, d, a = pior["kills"], pior["deaths"], pior["assists"]
+    store.de("ntp_smurf", g)[jogo] = {
+        "riot_id": conta, "campeao": riot.nome_por_id_interno(pior["championName"]),
+        "kda": f"{k}/{d}/{a}", "nota": notas[pior["puuid"]]["nota"], "ts": time.time(),
+        "dono": None, "por": None}
+    store.salvar()
+    s = store.de("ntp_smurf", g)[jogo]
+    view = discord.ui.View(timeout=None)
+    view.add_item(EscolhaNtpSmurf(g, jogo, candidatos))
+    try:
+        await canal.send(
+            f"🤡 O **NTP** foi da smurf **{escape_markdown(conta)}** ({s['campeao']} {s['kda']}, nota {s['nota']}).\n"
+            f"De quem é essa main? Escolha na lista para o NTP ir para a conta vinculada.",
+            view=view, allowed_mentions=SEM_MENCAO)
+    except discord.HTTPException as e:
+        log.warning("Não consegui perguntar o NTP da smurf: %s", e)
+
+
+class EscolhaNtpSmurf(discord.ui.DynamicItem[discord.ui.Select],
+                      template=r"ntpsmurf:(?P<g>\d+):(?P<jogo>\d+)"):
+    def __init__(self, g, jogo, candidatos: list[str] | None = None):
+        vinc = store.de("vinculos", g)
+        opcoes = [discord.SelectOption(label=vinc[u].get("riot_id", u)[:100], value=u)
+                  for u in sorted(candidatos or [], key=lambda u: vinc[u].get("riot_id", u).lower())][:25]
+        super().__init__(discord.ui.Select(
+            placeholder="Quem estava na smurf?", custom_id=f"ntpsmurf:{g}:{jogo}",
+            options=opcoes or [discord.SelectOption(label="-", value="0")]))
+        self.g, self.jogo = str(g), str(jogo)
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match["g"], match["jogo"])
+
+    async def callback(self, interaction: discord.Interaction):
+        s = store.de("ntp_smurf", self.g).get(self.jogo)
+        if not s:
+            await interaction.response.send_message("❌ Essa partida não está mais valendo.", ephemeral=True)
+            return
+        if s["dono"]:
+            await interaction.response.send_message(
+                f"❌ Já escolheram: o NTP foi para {nome(self.g, s['dono'])}.", ephemeral=True,
+                allowed_mentions=SEM_MENCAO)
+            return
+        dono = (interaction.data.get("values") or ["0"])[0]
+        if dono not in store.de("vinculos", self.g):
+            await interaction.response.send_message("❌ Escolha alguém da lista.", ephemeral=True)
+            return
+        s["dono"], s["por"] = dono, str(interaction.user.id)
+        store.salvar()
+        await interaction.response.edit_message(
+            content=(f"🤡 O **NTP** da smurf **{escape_markdown(s['riot_id'])}** ({s['campeao']} {s['kda']}, "
+                     f"nota {s['nota']}) foi para {nome(self.g, dono)} "
+                     f"(escolhido por {nome(self.g, interaction.user.id)})."),
+            view=None, allowed_mentions=SEM_MENCAO)
 
 
 # Fim da partida → resumo. Roda a cada 30 s (loop_resultados), separado da checagem de partidas novas.
@@ -1099,7 +1173,11 @@ async def cmd_mvp(interaction: discord.Interaction):
         jogos[e["user"]] += 1
         mvps[e["user"]] += 1 if e.get("mvp") else 0
         ntps[e["user"]] += 1 if e.get("ntp") else 0
-    if not hist:
+    smurfs = [x for x in store.de("ntp_smurf", g).values() if x.get("dono") and x["ts"] >= limite]
+    for x in smurfs:  # NTP feito numa smurf e atribuído à main
+        jogos[x["dono"]] += 1
+        ntps[x["dono"]] += 1
+    if not hist and not smurfs:
         await interaction.response.send_message(
             "Ainda não tenho partidas de Flex registradas nesta semana. As partidas são registradas quando "
             "os alertas estão ligados (`/config-alertas`).", ephemeral=True)
@@ -1117,7 +1195,7 @@ async def cmd_mvp(interaction: discord.Interaction):
     embed = discord.Embed(title="🏆 MVP e 🤡 NTP da semana (Flex)", color=CORES["ouro"])
     embed.add_field(name="🏆 MVP (melhor nota do time que venceu)", value=tabela(mvps)[:1024], inline=False)
     embed.add_field(name="🤡 NTP (pior nota da partida)", value=tabela(ntps)[:1024], inline=False)
-    embed.set_footer(text=f"Ranqueada Flex · últimos 7 dias · {plural(len(hist), 'partida')}")
+    embed.set_footer(text=f"Ranqueada Flex · últimos 7 dias · {plural(len(hist), 'partida')} · NTP em smurf conta para a main escolhida")
     await interaction.response.send_message(embed=embed, allowed_mentions=SEM_MENCAO)
 
 
@@ -1621,6 +1699,9 @@ async def cmd_sorteio(interaction: discord.Interaction):
 @tasks.loop(seconds=15)
 async def loop_eventos():
     agora = time.time()
+    for g, pend in store.d["ntp_smurf"].items():  # NTP de smurf com mais de 8 dias já não conta no /mvp
+        for jogo in [j for j, x in pend.items() if agora - x["ts"] > 8 * 86400]:
+            del pend[jogo]
     for g, ev in list(store.d["eventos"].items()):
         if not ev or ev["fim"] > agora:
             continue

@@ -19,6 +19,7 @@ CHAVES = {
     "duelos": {},          # {guild: {id: {"de", "para", "valor", "estado", "notas", ...}}}
     "geral": {},           # patch anunciado, avisos de status do servidor
     "loja": {},            # {guild: {"usuarios", "rifa", "desafios", "pendentes", "config"}}
+    "ntp_smurf": {},       # {guild: {jogo: {"riot_id", "campeao", "kda", "nota", "ts", "dono", "por"}}}
     "eventos": {},         # {guild: {"moedas", "fim", "canal", "criador", "participantes"}}  /evento + /sorteio
 }
 
