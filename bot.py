@@ -838,7 +838,23 @@ async def postar_resumo(g: str, canal, partida_salva: dict, partida: dict, depoi
         await perguntar_ntp_smurf(g, canal, info, notas, partida_salva)
 
 
-# NTP numa smurf (conta não vinculada) do time de alguém vinculado: o pessoal escolhe de quem é a main
+# NTP numa smurf (conta não vinculada) do time de alguém vinculado: o pessoal vota em 1 min de quem é a main
+VOTACAO_NTP_S = 60
+
+
+def texto_ntp_smurf(g: str, s: dict) -> str:
+    base = (f"🤡 O **NTP** foi da smurf **{escape_markdown(s['riot_id'])}** "
+            f"({s['campeao']} {s['kda']}, nota {s['nota']}).")
+    contagem = Counter(s.get("votos", {}).values())
+    placar = " · ".join(f"{nome(g, u)} ({n})" for u, n in contagem.most_common()) or "nenhum voto ainda"
+    if s.get("encerrado"):
+        if s.get("dono"):
+            return f"{base}\n🗳️ A maioria decidiu: o NTP foi para {nome(g, s['dono'])}. Votos: {placar}"
+        return f"{base}\n🗳️ Ninguém votou, o NTP não foi para ninguém."
+    return (f"{base}\nDe quem é essa main? **Votem na lista** — a maioria decide. "
+            f"Acaba <t:{int(s['fim'])}:R>.\nVotos: {placar}")
+
+
 async def perguntar_ntp_smurf(g: str, canal, info: dict, notas: dict, partida_salva: dict):
     ps = info["participants"]
     pior = next((p for p in ps if notas.get(p["puuid"], {}).get("ntp")), None)
@@ -853,23 +869,41 @@ async def perguntar_ntp_smurf(g: str, canal, info: dict, notas: dict, partida_sa
     candidatos = [u for u in store.de("vinculos", g) if u not in no_jogo]
     if not candidatos:
         return
-    conta = f"{pior.get('riotIdGameName') or '?'}#{pior.get('riotIdTagline') or '?'}"
     k, d, a = pior["kills"], pior["deaths"], pior["assists"]
-    store.de("ntp_smurf", g)[jogo] = {
-        "riot_id": conta, "campeao": riot.nome_por_id_interno(pior["championName"]),
-        "kda": f"{k}/{d}/{a}", "nota": notas[pior["puuid"]]["nota"], "ts": time.time(),
-        "dono": None, "por": None}
-    store.salvar()
-    s = store.de("ntp_smurf", g)[jogo]
+    s = {"riot_id": f"{pior.get('riotIdGameName') or '?'}#{pior.get('riotIdTagline') or '?'}",
+         "campeao": riot.nome_por_id_interno(pior["championName"]), "kda": f"{k}/{d}/{a}",
+         "nota": notas[pior["puuid"]]["nota"], "ts": time.time(), "fim": time.time() + VOTACAO_NTP_S,
+         "votos": {}, "dono": None, "encerrado": False, "canal": canal.id, "msg": None}
+    store.de("ntp_smurf", g)[jogo] = s
     view = discord.ui.View(timeout=None)
     view.add_item(EscolhaNtpSmurf(g, jogo, candidatos))
     try:
-        await canal.send(
-            f"🤡 O **NTP** foi da smurf **{escape_markdown(conta)}** ({s['campeao']} {s['kda']}, nota {s['nota']}).\n"
-            f"De quem é essa main? Escolha na lista para o NTP ir para a conta vinculada.",
-            view=view, allowed_mentions=SEM_MENCAO)
+        msg = await canal.send(texto_ntp_smurf(g, s), view=view, allowed_mentions=SEM_MENCAO)
+        s["msg"] = msg.id
     except discord.HTTPException as e:
         log.warning("Não consegui perguntar o NTP da smurf: %s", e)
+        s["encerrado"] = True
+    store.salvar()
+
+
+async def encerrar_votacoes_ntp(agora: float):
+    for g, pend in store.d["ntp_smurf"].items():
+        for jogo, s in pend.items():
+            if s.get("encerrado", True) or s.get("fim", 0) > agora:
+                continue
+            contagem = Counter(s.get("votos", {}).values())
+            if contagem:
+                maior = max(contagem.values())
+                s["dono"] = random.choice([u for u, n in contagem.items() if n == maior])  # empate: sorteio
+            s["encerrado"] = True
+            store.salvar()
+            canal = bot.get_channel(s.get("canal") or 0)
+            if canal and s.get("msg"):
+                try:
+                    msg = await canal.fetch_message(s["msg"])
+                    await msg.edit(content=texto_ntp_smurf(g, s), view=None, allowed_mentions=SEM_MENCAO)
+                except discord.HTTPException as e:
+                    log.warning("Não consegui fechar a votação do NTP: %s", e)
 
 
 class EscolhaNtpSmurf(discord.ui.DynamicItem[discord.ui.Select],
@@ -879,7 +913,7 @@ class EscolhaNtpSmurf(discord.ui.DynamicItem[discord.ui.Select],
         opcoes = [discord.SelectOption(label=vinc[u].get("riot_id", u)[:100], value=u)
                   for u in sorted(candidatos or [], key=lambda u: vinc[u].get("riot_id", u).lower())][:25]
         super().__init__(discord.ui.Select(
-            placeholder="Quem estava na smurf?", custom_id=f"ntpsmurf:{g}:{jogo}",
+            placeholder="Vote: quem estava na smurf?", custom_id=f"ntpsmurf:{g}:{jogo}",
             options=opcoes or [discord.SelectOption(label="-", value="0")]))
         self.g, self.jogo = str(g), str(jogo)
 
@@ -889,25 +923,18 @@ class EscolhaNtpSmurf(discord.ui.DynamicItem[discord.ui.Select],
 
     async def callback(self, interaction: discord.Interaction):
         s = store.de("ntp_smurf", self.g).get(self.jogo)
-        if not s:
-            await interaction.response.send_message("❌ Essa partida não está mais valendo.", ephemeral=True)
+        if not s or s.get("encerrado", True) or time.time() > s.get("fim", 0):
+            await interaction.response.send_message("❌ Essa votação já acabou.", ephemeral=True)
             return
-        if s["dono"]:
-            await interaction.response.send_message(
-                f"❌ Já escolheram: o NTP foi para {nome(self.g, s['dono'])}.", ephemeral=True,
-                allowed_mentions=SEM_MENCAO)
-            return
-        dono = (interaction.data.get("values") or ["0"])[0]
-        if dono not in store.de("vinculos", self.g):
+        voto = (interaction.data.get("values") or ["0"])[0]
+        if voto not in store.de("vinculos", self.g):
             await interaction.response.send_message("❌ Escolha alguém da lista.", ephemeral=True)
             return
-        s["dono"], s["por"] = dono, str(interaction.user.id)
+        s["votos"][str(interaction.user.id)] = voto
         store.salvar()
-        await interaction.response.edit_message(
-            content=(f"🤡 O **NTP** da smurf **{escape_markdown(s['riot_id'])}** ({s['campeao']} {s['kda']}, "
-                     f"nota {s['nota']}) foi para {nome(self.g, dono)} "
-                     f"(escolhido por {nome(self.g, interaction.user.id)})."),
-            view=None, allowed_mentions=SEM_MENCAO)
+        await interaction.response.edit_message(content=texto_ntp_smurf(self.g, s), allowed_mentions=SEM_MENCAO)
+        await interaction.followup.send(f"🗳️ Seu voto: {nome(self.g, voto)} (dá para trocar até acabar).",
+                                        ephemeral=True, allowed_mentions=SEM_MENCAO)
 
 
 # Fim da partida → resumo. Roda a cada 30 s (loop_resultados), separado da checagem de partidas novas.
@@ -1696,9 +1723,10 @@ async def cmd_sorteio(interaction: discord.Interaction):
         allowed_mentions=SEM_MENCAO)
 
 
-@tasks.loop(seconds=15)
+@tasks.loop(seconds=5)
 async def loop_eventos():
     agora = time.time()
+    await encerrar_votacoes_ntp(agora)
     for g, pend in store.d["ntp_smurf"].items():  # NTP de smurf com mais de 8 dias já não conta no /mvp
         for jogo in [j for j, x in pend.items() if agora - x["ts"] > 8 * 86400]:
             del pend[jogo]
